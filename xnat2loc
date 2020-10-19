@@ -1,0 +1,271 @@
+# Author: Mikhail Milchenko, mmilchenko@wustl.edu
+# Copyright (c) 2020, Computational Imaging Lab, School of Medicine, 
+# Washington University in Saint Louis
+
+# Redistribution and use in source and binary forms,
+# with or without modification, are permitted provided 
+# that the following conditions are met:
+
+# 1. Redistributions of source code must retain the above 
+#    copyright notice, this list of conditions and the following
+#    disclaimer.
+# 2. Redistributions in binary form must reproduce the above 
+#    copyright notice, this list of conditions and the following 
+#    disclaimer in the documentation and/or other materials 
+#    provided with the distribution.
+
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+# PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+# TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#!/bin/bash
+
+#Sun Grid Engine configuration options
+#shell name
+#$ -S /bin/bash
+#write .e and .o to the working directory
+#$ -cwd
+#merge stdout and stderr
+#$ -j y
+#import environment variables
+#$ -V
+
+# in 1: downloaded study location
+# in 2: location to save file with mappings
+# in 3: predefined scans
+function save_UID_map
+{
+	local st=$1 
+	local mf=$2
+	local sc=($3)
+	
+	pushd $st/scans &> /dev/null
+	local scans=""
+	local uids=""
+	local scan xnatid suid i j found
+	for ((i=0; i<${#sc[*]}; i++)); do
+		scandir=(`ls -d ${sc[i]}-*`)
+		if [ -z "${scandir}" ]; then
+			echo "xnat2loc ERROR: cannot find scan ${sc[i]}, exiting"
+			exit -1
+		fi
+		if (( ${#scandir[*]} > 1 )); then
+			regex="${sc[i]}-MR([0-9]+).*"
+			found=-1
+			for (( j=0; j<${#scandir[*]}; j++ )); do
+				[[ "${scandir[j]}" =~ $regex ]]
+				if [ -z "${BASH_REMATCH[0]}" ]; then
+					if (( found != -1 )); then
+						echo "xnat2loc ERROR: cannot uniquely resolve scan ID: ${sc[i]}, exiting"
+						exit -1
+					else
+						found=$j
+					fi
+				fi
+			done
+			scandir=${scandir[found]}
+			if [ -z "${scandir}" -o "$found" == "-1" ]; then
+				echo "xnat2loc ERROR: cannot find scan ${sc[i]}, exiting"
+				exit -1
+			fi
+		fi
+		xnatid=${scan%-*}
+		suid=(`dcminfo -q -t 0020 000e $scandir/resources/DICOM/files`)
+		suid=( $suid )
+		suid=`echo $suid | tr -d '<>'`
+#		scans="$scans ${sc[i]}"
+		if ((i>0)); then
+			uids="$uids,${sc[i]},$suid"
+		else
+			uids="${sc[i]},$suid"
+		fi
+	done
+	popd &> /dev/null
+	echo "serinstuids=($uids)" | tr -d ' ' >> $mf
+}
+
+
+
+#1: str
+#2: field
+function get_field
+{
+	local b="$1" f="$2" c d
+	c=${b# * ID=\"}
+	d=${c%%\"*}
+}
+
+###################################################################
+#
+# Get scan #'s of given types.
+# 
+# input 1: CURL connection string, i.e. curl -k -u user:pass host ....
+# input 2: scan type
+#
+
+function get_scans
+{
+	local cstr="$1"
+	local stypes="$2"
+	local line id scans
+
+	local f=`mktemp xnat2locXXXX` f1=`mktemp xnat2locXXXX`
+	$cstr > $f
+	grep "xnat:scan ID=.*type=\"$2\"" $f > $f1
+	while read line; do
+		c=${line#* ID=\"};id=${c%%\"*}
+		if [ -n "$scans" ]; then scans="$id,$scans"; else scans=$id; fi
+	done < $f1
+	echo $scans
+}
+
+#split tokenized string 
+#input 1: string
+#input 2: token
+function split_str
+{
+	local str="$1"
+	local token="$2"
+	arr=`echo "$str" | tr "$token" " "`
+	echo $arr
+}
+echo "XNAT session -> local storage"
+if [ -z $1 ]; then
+	echo "Usage: xnat2loc <session label> [options]"
+	echo "Options:"
+	echo "	-sr	<server>			"
+	echo "	-u	<user>"
+	echo "	-pa	<password>"
+	echo "	-js	<JSESSIONID>"
+	echo "	-pr	<XNAT project>"
+	echo "	-o	<outdir>			"
+	echo "	-s	<scan_id>[,<scan_id>,...]	scan ids (default is ALL)"
+	echo "	-m	save XNAT ID -> DICOM Series instance UID map to scans.txt"
+	echo "	-st	<scan_type>	scan type"
+	echo "	-r	<dir>[,<dir>,...]		resource directory(ies) to download"
+	echo "	-subj	<subject ID>"
+	echo "	-z	Do not unzip"
+	echo "NOTE: if both -s and -r are specified, specified scans with specified scan resource dir(s) will be downloaded."
+	exit -1
+fi
+umask 0007
+dcmsrt=${MFREL}/dcm_sort
+dcmsrt=dcm_sort
+
+slabel=$1; shift;
+
+for arg in "$@"; do args[i]=$arg; ((i++)); done
+#for((i=1; i<((${#args[*]})); i++)); do echo ${args[i]}; done
+mapfile=0
+#set -x
+
+JSESSION=""
+
+while [ -n "$1" ]; do
+	case "$1" in
+		-sr) shift; server=$1; shift ;;
+		 -z) shift; savezip=1 ;;
+		 -u) shift; user=$1; shift ;;
+		-pa) shift; pass=$1; shift ;;
+		-js) shift; JSESSION=$1; shift ;;
+		 -l) shift; slabel=$1; shift ;;
+		-pr) shift; project=$1; shift ;;
+		-sr) shift; server=$1; shift ;;
+		 -o) shift; outdir=$1; shift ;;
+		 -m) shift; mapfile=1; shift ;;
+		 -s) shift; scans=$1; shift; if [ -f "$scans" ]; then scans=`cat $scans`; fi ;;
+		-st) shift; stypes=$1; shift; if [ -f "$stypes" ]; then stypes=`cat $stypes`; fi ;;
+		 -r) shift; rdirs=$1; shift; if [ -f "$rdirs" ]; then stypes=`cat $rdirs`; fi ;;
+	      -subj) shift; subj=$1; shift ;;
+		  *) shift ;;
+	esac
+done
+
+server=`echo $server | sed 's/\/$//'`
+if [ -z "$project" -o -z "$subj" -o -z "$slabel" ]; then
+	echo "Please specify project, subject and session label."
+	exit -1
+fi
+
+if [ -z "$JSESSION" ]; then
+	if [ -z "$user" -o -z "$pass" ]; then
+		echo "User credentials required, exiting"
+	fi
+	echo curl -s -k -u $user:xxxx "$server/data/JSESSION"
+	JSESSION=`curl -s -k -u $user:$pass "$server/data/JSESSION"`
+	JSERROR=`echo $JSESSION | grep Error`
+	if [ -n "$JSERROR" ]; then echo "user credentials failed"; exit -1; fi
+fi
+prm="curl -k --cookie JSESSIONID=$JSESSION"; prms="curl -k --cookie JSESSIONID=[...]"; 
+
+#scan resource dir with DICOM files.
+dcmdir=DICOM
+#uncomment for modified DICOM
+#dcmdir=DICOM_ORIG
+
+echo "project: $project subject: $subj session: $slabel scans: $scans"
+if [ -z "$outdir" ]; then outdir=$slabel; fi
+mkdir $outdir; pushd $outdir &> /dev/null
+
+if [ -n "$stypes" ]; then
+	cstr="$prm $server/REST/projects/$project/subjects/$subj/experiments/$slabel?format=xml"
+	extra_scans=`get_scans "$cstr" "$stypes"`
+	if [ -z "$scans" ]; then 
+		scans=$extra_scans
+	else
+		scans="${scans},$extra_scans"
+	fi
+elif [ -z "$scans" ]; then 
+	scans="ALL"; 
+fi
+
+
+
+#download scans if no resource dir was specified
+if [ -n "$scans" -a -z "$rdirs" ]; then
+	echo "$prms \"${server}/REST/projects/${project}/subjects/${subj}/experiments/${slabel}/scans/${scans}/files?format=zip\""
+	$prm "${server}/REST/projects/${project}/subjects/${subj}/experiments/${slabel}/scans/${scans}/files?format=zip" > temp.zip
+#download resource dir(s)
+	if [ -n "$savezip" ]; then popd &> /dev/null; exit 0; fi
+	unzip temp.zip &> /dev/null; rm temp.zip
+	mkdir DICOM
+#	mkdir SECONDARY
+#	set -x
+	if [ "$mapfile" == "1" -a "$scans" != "ALL" ]; then
+		OLDIFS=$IFS
+		IFS=','
+		sarr=( $scans )
+		IFS=$OLDIFS
+		echo save_UID_map $slabel `pwd`/scans.txt "${sarr[*]}"
+		save_UID_map $slabel `pwd`/scans.txt "${sarr[*]}"
+	fi
+#	set +x
+	mv */scans/*/*/$dcmdir/files/* DICOM/
+	$dcmsrt DICOM &> /dev/null
+
+	rm -r $slabel
+	#mv */scans/*/*/secondary/files/* SECONDARY
+	#dcm_sort DICOM
+else
+	echo $prms "${server}/REST/projects/${project}/subjects/${subj}/experiments/${slabel}/resources/${rdirs}/files?format=zip"
+	$prm "${server}/REST/projects/${project}/subjects/${subj}/experiments/${slabel}/resources/${rdirs}/files?format=zip" > temp.zip
+	unzip temp.zip &> /dev/null; rm temp.zip
+	mv ${slabel}/resources/* .
+	lst=( `split_str $rdirs ","` )
+	for ((i=0; i<${#lst[*]}; i++)); do
+		t=${lst[i]}
+		mv $t/files/* $t/
+		rm -r $t/files
+	done
+fi
+
+popd &> /dev/null
+

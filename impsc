@@ -1,0 +1,241 @@
+# Author: Mikhail Milchenko, mmilchenko@wustl.edu
+# Copyright (c) 2020, Computational Imaging Lab, School of Medicine, 
+# Washington University in Saint Louis
+
+# Redistribution and use in source and binary forms,
+# with or without modification, are permitted provided 
+# that the following conditions are met:
+
+# 1. Redistributions of source code must retain the above 
+#    copyright notice, this list of conditions and the following
+#    disclaimer.
+# 2. Redistributions in binary form must reproduce the above 
+#    copyright notice, this list of conditions and the following 
+#    disclaimer in the documentation and/or other materials 
+#    provided with the distribution.
+
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+# PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+# TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#!/bin/bash
+#last revision: 3/3/2015 by mmilch01
+#fixed token parsing in get_scans
+
+#Sun Grid Engine configuration options
+#shell name
+#$ -S /bin/bash
+#write .e and .o to the working directory
+#$ -cwd
+#merge stdout and stderr
+#$ -j y
+#import environment variables
+#$ -V
+
+#split tokenized string 
+#input 1: string
+#input 2: token
+function split_str
+{
+	local str="$1"
+	local token="$2"
+	arr=`echo "$str" | tr "$token" " "`
+	echo $arr
+}
+#input 1: CURL connection string, i.e. curl -k -u user:pass host ....
+#input 2: scan type
+function get_scans
+{
+	local cstr=$1
+	local stype=$2	
+	local lines
+	local row
+	local cols
+	local ids
+	local idi
+	local ti
+	t=`mktemp`
+	$cstr > $t
+	i=0
+	while read line; do lines[i]="$line"; ((i++)); done < $t; rm -rf $t
+
+#	lines=( $lines )
+#	eval "lines=($lines)"
+	OLDIFS=$IFS
+	IFS=","
+	cols=(${lines[0]})
+	for ((i=0; i<${#cols[*]}; i++)); do
+		if [ "${cols[i]}" == "ID" ]; then idi=$i; fi
+		if [ "${cols[i]}" == "type" ]; then ti=$i; fi
+	done
+	for ((i=1; i<${#lines[*]}; i++)); do
+		row=( ${lines[i]} )
+		if [ "${row[$ti]}" == "$stype" ]; then
+			ids="${row[$idi]} $ids"
+		fi
+	done
+	IFS=$OLDIFS
+	echo $ids
+}
+function finish
+{
+	echo $1 >> $logfile
+	cp $logfile $SDIR/impsc.log	
+}
+
+echo "Import scans into an offline session."
+if [ -z $2 ]; then
+echo "Usage: impsc <local session dir> <foreign session label> [options]"
+echo "Options:"
+echo "	-sr	<server>			"
+echo "	-u	<user>"
+echo "	-pa	<password>"
+echo "	-js	<JSESSION>"
+echo "	-pr	<XNAT project>"
+echo "	-s	<scan_id>[,<scan_id>,...]	scan id's in the foreign session"
+echo "	-st	<scan type>		scan type to import, if scan id's are not specified."
+echo "	-subj	<subject ID>"
+exit -1
+fi
+#set -x
+
+SDIR=$1; shift
+ISLABEL=$1; shift
+
+pushd $SDIR &> /dev/null
+cur_path=`pwd`
+STUDY=`basename $cur_path`
+
+if [ "$STUDY" == "$ISLABEL" ]; then
+	echo "No need to import study to itself, exiting"
+	popd &> /dev/null
+	exit 0
+fi
+while [ -n "$1" ]; do
+	case "$1" in
+		-sr) shift; server="$1"; shift ;;
+		-u) shift; user="$1"; shift ;;
+		-pa) shift; pass="$1"; shift ;;
+		-pr) shift; project="$1"; shift ;;
+		-sr) shift; server="$1"; shift ;;
+		-js) shift; JSESSION="$1"; shift ;;
+		-subj) shift; subj="$1"; shift ;;
+		-st) shift; st="$1"; shift ;;
+		-s) shift; sc="$1"; if [ -n "$sc" ]; then isc=(`split_str $sc ","`); fi; shift ;;
+		*) shift ;;
+	esac
+done
+
+if [ -z "$JSESSION" ]; then
+	if [ -z "$user" -o -z "$pass" ]; then
+		echo "User credentials required, exiting"
+	fi
+	JSESSION=`curl -s -k -u $user:$pass "$server/data/JSESSION"`
+	JSERROR=`echo $JSESSION | grep Error`
+	if [ -n "$JSERROR" ]; then echo "user credentials failed"; exit 1; fi
+fi
+
+prm="curl -k --cookie JSESSIONID=$JSESSION"; prms="-k --cookie JSESSIONID=[...]"; 
+
+if (( ${#isc}<1 )); then
+	if (( ${#st}>0 )); then
+#		set -x
+		cstr="$prm $server/REST/projects/$project/subjects/$subj/experiments/$ISLABEL/scans?format=csv"
+		isc="`get_scans "$cstr" "$st"`"
+		isc=($isc)
+		sc=${isc// /,}
+		echo ${isc[*]}
+		echo $sc
+	fi
+	if (( ${#isc}<1 )); then
+		finish "impsc ERROR: no scans to import, exiting."; exit -1
+	fi
+fi
+#convert SDIR to absolute path
+pushd $SDIR &> /dev/null
+	SDIR=`pwd`
+	dnames=( `ls -d study* 2>/dev/null` )
+popd &> /dev/null
+
+logfile=$SDIR/import_`date +%Y%m%d_%H%M%S`.log
+tempdir=`mktemp -d $SDIR/_IMPORT_TEMP_XXXX`
+
+#build a list of currently existing DICOM directory names
+#echo "curdir=`pwd`; ls -d study*"
+
+
+mkdir -p $tempdir
+#mkdir -p logs
+
+#populate arrays of sid, seq, desc, cnt with existing scan info.
+echo txt2bash $SDIR/DICOM.studies.txt $tempdir/home.params 
+txt2bash $SDIR/DICOM.studies.txt $tempdir/home.params 
+pushd $tempdir &> /dev/null
+
+#download the scan to import to a temp dir.
+echo xnat2loc $ISLABEL -sr $server -js [...] -pr $project -subj $subj -s $sc
+xnat2loc $ISLABEL -sr $server -js $JSESSION -pr $project -subj $subj -s $sc
+
+str=(`split_str $sc ,`)
+for sc in ${str[*]}; do
+	scl=${sc%%-MR*}
+	if [ ! -d "$ISLABEL/study$scl" ]; then 
+		echo "impsc ERROR: cannot import $ISLABEL/$sc, exiting"  
+		exit -1
+	fi
+done
+
+#populate arrays of sid_n, seq_n, desc_n, cnt_n with imported scan info.
+echo txt2bash $ISLABEL/DICOM.studies.txt import.params -n sid_n,seq_n,desc_n,cnt_n
+txt2bash $ISLABEL/DICOM.studies.txt import.params -n sid_n,seq_n,desc_n,cnt_n
+source home.params
+source import.params
+n=${#dnames[*]}
+
+#populate the array with all possible names that the algorithm can encounter.
+for ((i=0,j=n;i<${#sid[*]};i++,j++)); do
+	dnames[j]=study${sid[i]}
+done
+echo "dnames: ${#dnames[*]}"
+n=${#dnames[*]}
+#echo "src		dest		src_id		dest_id" > $logfile
+tdfile=$SDIR/DICOM.studies.txt
+unset sources destinations
+
+for i in ${!sid_n[*]}; do
+	if [ ! -d "$ISLABEL/study${sid_n[i]}" ]; then 
+		echo "impsc ERROR: cannot import ISLABEL/study${sid_n[i]}, exiting"
+		exit -1
+	fi
+	res=0
+	sugg_ind=0
+	while (( res==0 )); do
+		new_id=${isc[i]}0$sugg_ind
+		res=1
+		for ((k=0; k<${#dnames[*]}; k++)); do
+			if [ "${dnames[k]}" == "study$new_id" ]; then res=0; break; fi			
+		done
+		if (( res==0 )); then (( sugg_ind++ )); fi
+	done
+	sources[i]="${isc[i]}:$ISLABEL"
+	destinations[i]="$new_id"
+	mv $ISLABEL/study${sid_n[i]} $SDIR/study$new_id
+	echo "$new_id		${seq_n[i]}		${desc_n[i]}		${cnt_n[i]}" >> $tdfile
+done
+echo "__sources=(${sources[*]})" >> $logfile
+echo "__destinations=(${destinations[*]})" >> $logfile
+finish
+
+popd &> /dev/null
+#rm -r $tempdir &> /dev/null
+popd &> /dev/null
+cat $logfile
+exit 0

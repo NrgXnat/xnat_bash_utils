@@ -1,0 +1,16 @@
+#!/bin/bash
+if [ -z "$1" ]; then
+	echo "Usage: add_license <file>"
+	exit
+fi
+
+f=$1
+RT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+lic=$RT/license.txt
+
+tf=`mktemp XXXX`
+cat $lic > $tf
+cat $f >> $tf
+
+chmod --reference=$f $tf
+mv $tf $f

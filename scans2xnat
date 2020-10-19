@@ -1,0 +1,89 @@
+# Author: Mikhail Milchenko, mmilchenko@wustl.edu
+# Copyright (c) 2020, Computational Imaging Lab, School of Medicine, 
+# Washington University in Saint Louis
+
+# Redistribution and use in source and binary forms,
+# with or without modification, are permitted provided 
+# that the following conditions are met:
+
+# 1. Redistributions of source code must retain the above 
+#    copyright notice, this list of conditions and the following
+#    disclaimer.
+# 2. Redistributions in binary form must reproduce the above 
+#    copyright notice, this list of conditions and the following 
+#    disclaimer in the documentation and/or other materials 
+#    provided with the distribution.
+
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+# PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+# TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#!/bin/bash
+
+echo "Upload a directory with numbered DICOM scans to an XNAT experiment"
+if [ -z $2 ]; then
+	echo "Usage: scans2xnat <session label> <local directory> [options]"
+	echo "e.g. scans2xnat SUBJ1_MRSESSION1 ProcessedDir -u user -pa password -sr myXNAT -pr MYPROJ -subj SUBJ1"
+	echo "Options:"
+	echo "	-sr	<server>			"
+	echo "	-u	<user>"
+	echo "	-pa	<password>"
+	echo "	-js	<JSESSION>"
+	echo "	-pr	<XNAT project>"
+	echo "	-subj	<subject ID>"
+	exit -1
+fi
+
+slabel=$1; shift
+dir=$1; shift
+
+
+while [ -n "$1" ]; do
+    case $1 in 
+        -sr)    shift; server=$1; shift ;;
+        -u)     shift; user=$1; shift ;;
+        -pa)    shift; pass=$1; shift ;;
+		-js)	shift; JSESSION=$1; shift ;;
+        -pr)    shift; project=$1; shift ;;
+        -subj)  shift; subj=$1; shift ;;
+            *)  shift ;;
+    esac
+done
+
+echo "verifying login..."
+if [ -z "$JSESSION" ]; then
+	JSESSION=`curl -s -k -u $user:$pass "$server/data/JSESSION"`
+	JSERROR=`echo $JSESSION | grep Error`
+fi
+if [ -n "$JSERROR" ]; then	echo "scans2xnat ERROR: cannot acquire JSESSION"; exit -1; fi	
+
+#zip and upload each scan.
+pushd $dir
+    for d in `ls -d *`; do
+	    if [ ! -d "$d" ]; then continue; fi
+	    echo loc2xnat_nojava $slabel $d d -sr $server -js $JSESSION -pr $project -subj $subj -s $d -d
+	    loc2xnat_nojava $slabel $d d -sr $server -js $JSESSION -pr $project -subj $subj -s $d -d
+	    if  (( $? )); then
+	        echo "scans2xnat failed"
+	        exit -1
+	    fi
+    done
+popd
+
+echo curl -k --cookie JSESSIONID=$JSESSION -X PUT $server/data/archive/projects/$project/subjects/$subj/experiments/$slabel?pullDataFromHeaders=true
+
+curl -k --cookie JSESSIONID=$JSESSION -X PUT $server/data/archive/projects/$project/subjects/$subj/experiments/$slabel?pullDataFromHeaders=true
+
+if (( $? )); then
+    echo "request to regenerate metadata failed"
+    exit -1
+fi
+

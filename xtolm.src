@@ -1,0 +1,510 @@
+# Author: Mikhail Milchenko, mmilchenko@wustl.edu
+# Copyright (c) 2020, Computational Imaging Lab, School of Medicine, 
+# Washington University in Saint Louis
+
+# Redistribution and use in source and binary forms,
+# with or without modification, are permitted provided 
+# that the following conditions are met:
+
+# 1. Redistributions of source code must retain the above 
+#    copyright notice, this list of conditions and the following
+#    disclaimer.
+# 2. Redistributions in binary form must reproduce the above 
+#    copyright notice, this list of conditions and the following 
+#    disclaimer in the documentation and/or other materials 
+#    provided with the distribution.
+
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+# PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+# TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#!/bin/bash
+#Sun Grid Engine configuration options
+#shell name
+#$ -S /bin/bash
+#write .e and .o to the working directory
+#$ -cwd
+#merge stdout and stderr
+#$ -j y
+#import environment variables
+#$ -V
+
+function load_scans()
+{
+	if (( xt_offline == 1 )); then return -1; fi
+	pushd $xt_workdir/$xt_sess &> /dev/null
+	local res
+	echo xnat2loc $xt_sess -sr $xt_server -u $xt_user -pa \* -pr $xt_project -subj $xt_subj -s $1 -o `pwd`
+	xnat2loc $xt_sess -sr $xt_server -u $xt_user -pa $xt_pass -pr $xt_project -subj $xt_subj -s $1 -o `pwd`	
+	res=$?
+	popd &> /dev/null
+	return $res
+}
+function sample_size()
+{
+	local sz name=$1
+	if [ -z "$name" ]; then echo 0; return; fi
+	eval "sz=\${#$name[@]}"
+	echo $sz
+}
+
+#convert excel 2-based loop range argument to xtolm 0-based
+function ixl2xt
+{
+	local s=$1
+	local st=${s%-*} en=${s#*-}
+	local st1="" en1=""
+	if [ -n "$st" ]; then st1=$((st-2)); fi
+	if [ -n "$en" ]; then en1=$((en-2)); fi
+	echo "${st1}-${en1}"
+}
+
+#convert range of form [st]to[en][,[st]to[en],...] to a binary array xt_range
+#in 1: range string
+#in 2: sample size
+function xt_init_for_range
+{
+	local ranges oldIFS i j st en r iter_st iter_en sz=$2
+	oldIFS=$IFS; IFS=','; ranges=($1); IFS=$oldIFS
+	unset xt_range
+	
+	#initilize array
+	for (( i=0; i<sz; i++ )); do xt_for_range[i]=0; done
+
+
+	xt_iter_ind=0; xt_iter_end=$((sz-1))
+	min_iter_ind=$xt_iter_end; max_iter_ind=0
+	for i in ${!ranges[*]}; do
+		#extract current segment.
+		r=`ixl2xt ${ranges[i]}`
+		st=${r%-*}; en=${r#*-}
+
+		#initialize indices for the current segment.
+		iter_ind=0; iter_end=$((sz-1))
+		if [ -n "$st" ]; then iter_ind=$st; fi
+		if [ -n "$en" ]; then iter_end=$en; fi
+
+		#update min and max indices from the current segment.
+		if (( iter_ind < min_iter_ind )); then min_iter_ind=$iter_ind; fi
+		if (( iter_end > max_iter_ind )); then max_iter_ind=$iter_end; fi
+
+		#update active range flags for this segment.
+		for (( j=iter_ind; j<=iter_end; j++ )); do xt_for_range[j]=1; done
+	done
+	#update start and end indices.
+	xt_iter_ind=$min_iter_ind; xt_iter_end=$max_iter_ind
+}
+
+#start iterating over the spreadsheet.
+#1: subject variable
+#2: session variable
+#3: range: [a]to[b]
+
+function xt_for()
+{
+	xt_loop_subject="$1"
+	xt_loop_session="$2"
+	local sz st en r="$3"
+	if [ -z "$xt_loop_session" ]; then xt_loop_session=$xt_loop_subject; fi
+	sz=`sample_size ${xt_loop_session}_xt`
+	xt_init_for_range $r $sz
+#	xt_iter_ind=0; xt_iter_end=$((sz-1))
+#	if [ -n "$r" ]; then
+#		r=`ixl2xt $r`
+#		st=${r%to*}; en=${r#*to}
+#		if [ -n "$st" ]; then xt_iter_ind=$st; fi
+#		if [ -n "$en" ]; then xt_iter_end=$en; fi
+#	fi
+	if (( xt_iter_end >= sz )); then echo "xt_for ERROR: iteration range (${xt_iter_ind}to${xt_iter_end}) exceeds sample size ($sz)"; exit -1; fi
+	((xt_iter_ind--))
+}
+function xt_loop_iteration_init()
+{
+	#first, we re-init all variables looped over.
+	local arr
+	for arr in ${rcsv_col_names_xt[*]}; do eval "$arr=\"\${${arr}_xt[$xt_iter_ind]}\""; done
+	#set context
+	eval "set_context \$$xt_loop_subject \$$xt_loop_session"
+	
+}
+
+#in 1: .csv or .xlsx file
+function load_data
+{
+	local f=$1
+	if [ ! -f "$f" ]; then
+		echo "xtolm ERROR: cannot find file $f"
+		exit -1
+	fi
+	local ext=${f##*.}
+	echo "loading $1"
+	local tf=`mktemp tempXXX.p`
+	local rcsv_col_names
+
+	if [ "$ext" == "xlsx" ]; then echo "xlsx format detected"; fi
+
+	if [ "$ext" == "csv" ]; then
+		echo "csv format detected"
+		echo rcsv $f $tf
+		rcsv $f $tf; source $tf; rm $tf
+	elif [ "$ext" == "xlsx" ]; then
+		if hash xlsx2csv.py 2>/dev/null; then 
+			echo xlsx2csv.py $f $tf.csv
+			xlsx2csv.py $f $tf.csv
+			rcsv $tf.csv $tf; source $tf; rm $tf $tf.csv
+		else 
+			echo "#xtolm ERROR: cannot convert xlsx file, xlsx2csv.py is not found."
+		fi
+	else 
+		echo "#xtolm ERROR: unsupported spreadsheet format"
+		exit -1
+	fi
+
+	#change array names
+
+	rcsv_col_names_xt=(${rcsv_col_names[*]})
+
+
+	for arr in ${rcsv_col_names_xt[*]}; do
+		eval "${arr}_xt=(\"\${${arr}[@]}\")"
+		unset $arr
+	done
+	local sz=0
+	eval "sz=\${#${rcsv_col_names_xt[0]}_xt[*]}"
+	echo "loaded $sz row(s)"
+}
+function load_type()
+{
+	local type=$1
+	pushd $xt_workdir/$xt_sess &> /dev/null
+	local sf=${xt_aid}_xtscans res
+	if [ -f "$sf" ]; then source $sf; fi
+	if (( xt_offline == 0 )); then
+		echo xnat2loc $xt_sess -sr $xt_server -u $xt_user -pa <> -pr $xt_project -subj $xt_subj -st "$type" -o `pwd` -m
+		xnat2loc $xt_sess -sr $xt_server -u $xt_user -pa $xt_pass -pr $xt_project -subj $xt_subj -st "$type" -o `pwd` -m	
+		res=$?
+		oIFS=$IFS;IFS=',';source scans.txt;serinstuids=(${serinstuids[*]});IFS=$oIFS
+		local i j scans
+		for ((i=0,j=0;i<${#serinstuids[*]};i+=2,j++)); do
+			scans="$scans ${serinstuids[i]}"
+		done
+		xt_scans["$type"]=$scans
+		local t
+		echo -n "xt_scans=(" > $sf
+		for t in ${!xt_scans[*]}; do
+			echo -n "[\"$t\"]=\"${xt_scans["$t"]}\" " >> $sf
+		done
+		echo ")" >> $sf
+	fi
+	cat $sf	
+	popd &> /dev/null
+	return $res
+set +x
+}
+
+function load_dir()
+{
+		local res=-1
+		if (( xt_offline == 1 )); then return $res; fi
+		pushd $xt_workdir/$xt_sess &> /dev/null
+		echo xnat2loc $xt_sess -sr $xt_server -u $xt_user -pa <> -pr $xt_project -subj $xt_subj -r $1 -o `pwd`
+		xnat2loc $xt_sess -sr $xt_server -u $xt_user -pa $xt_pass -pr $xt_project -subj $xt_subj -r $1 -o `pwd`
+		res=$?
+		popd &> /dev/null
+		return $res
+}
+function load_file()
+{
+	if (( xt_offline == 1 )); then return; fi
+	pushd $xt_workdir/$xt_sess &> /dev/null
+	local f bn res files="$*" result=-1
+	for f in $files; do
+		res=${f#*/}
+		bn=${f%/$res} 
+		curl -k -u $xt_user:$xt_pass "${xt_server}/REST/projects/${xt_project}/subjects/${xt_subj}/experiments/${xt_sess}/resources/${bn}/files/${res}?format=zip">$bn.zip
+		if [ "$?" -ne 0 ]; then return -1; fi
+		unzip $bn.zip -d $bn;
+		rm -rf $bn.zip
+	done
+	popd &> /dev/null
+	return 0
+}
+function save_dir()
+{
+	if (( xt_offline == 1 )); then return; fi
+	loc2xnat_nojava $xt_sess $1 r -sr $xt_server -u $xt_user -pa $xt_pass -pr $xt_project -subj $xt_subj -d
+	return $?
+}
+
+#load variables with given names
+function load_vars()
+{
+	local vars=($*)
+	for var in ${vars[*]}; do
+		eval "$var=\"${xt_vars[$var]}\""
+	done
+}
+
+#save variables in session dir.
+function save_vars()
+{
+	local arg args="$*" found cf out
+	if [ -z "$xt_ancont" ]; then
+		out=${xt_aid}_xtvar
+	else
+		out=${xt_aid}_${xt_ancont}_xtcontvar
+	fi
+	echo -n "Saved variables: "
+#	echo $args
+	for arg in $args; do
+		echo -n "$arg=\"${!arg}\" "
+		xt_vars[$arg]="${!arg}"
+	done
+	echo ""
+	pushd $xt_workdir/$xt_sess &> /dev/null
+	xt_var_names=( ${!xt_vars[@]} )
+	echo "xt_var_names=( ${!xt_vars[@]} )" > $out
+	echo -n "xt_var_values=( " >> $out
+	local i
+	for ((i=0;i<${#xt_vars[@]};i++)); do 
+		echo -n "\"${xt_vars[${xt_var_names[i]}]}\" " >> $out
+	done
+	echo ")" >> $out
+
+	#create/rewrite file that lists contexts withtin this session.	
+	if [ -n "$xt_ancont" ]; then
+		cf=${xt_aid}_xtcont
+		if [ -f "$cf" ]; then
+			source $cf
+			found=0
+			echo -n "xt_cont_ids=(" > $cf
+			for arg in ${xt_cont_ids[*]}; do if [ "$arg" == "$xt_ancont" ]; then found=1; fi; echo -n "\"$arg\" " >> $cf; done
+			if (( found == 0 )); then echo -n "\"$xt_ancont\"" >> $cf; fi
+			echo ")" >> $cf
+		else
+			echo "xt_cont_ids=(\"$xt_ancont\")" > $cf
+		fi
+	fi		
+	popd &> /dev/null
+set +x
+}
+
+function save_workspace()
+{
+	if (( xt_offline == 1 )); then return -1; fi
+	if [ -z "${xt_aid}" ]; then echo "Analysis ID is not specified, cannot save workspace"; return; fi
+	pushd $xt_workdir/$xt_sess &> /dev/null
+	echo "#saving workspace"
+	local result
+	curl -k -u $xt_user:$xt_pass -X PUT "${xt_server}/REST/projects/${xt_project}/subjects/${xt_subj}/experiments/${xt_sess}/resources/${xt_aid}"		
+	res=`curl -k -u $xt_user:$xt_pass -X PUT -T ${xt_aid}_xtvar "${xt_server}/REST/projects/${xt_project}/subjects/${xt_subj}/experiments/${xt_sess}/resources/${xt_aid}/files/${xt_aid}_xtvar?overwrite=true&inbody=true"`
+	result=$?
+	if [ -n "$res" ]; then 	echo "#$res"; fi
+	popd &> /dev/null
+	return $result;
+}
+
+function load_workspace()
+{
+	if (( xt_offline == 1 )); then return -1; fi
+	if [ -z "${xt_aid}" ]; then echo "Analysis ID is not specified, cannot load workspace"; return; fi	
+	local i result
+	#load from XNAT
+	res=`curl -k -u $xt_user:$xt_pass "${xt_server}/REST/projects/${xt_project}/subjects/${xt_subj}/experiments/${xt_sess}/resources/${xt_aid}/files/${xt_aid}_xtvar"`
+	result=$?
+	xt_first_run=`echo $res | grep 'Unable to find file'``echo $res | grep 'Status 404'`
+	if [ -z "$xt_first_run" ]; then
+		for (( i=0; i<${#xt_var_names[*]}; i++ )); do
+			xt_vars[${xt_var_names[i]}]=${xt_var_values[i]}
+		done
+	fi	
+	local var
+	for var in ${!xt_vars[*]}; do echo -n "[$var]=${xt_vars[$var]} "; done
+	echo ""
+	return $result
+}
+
+function set_context()
+{
+	cd $xt_workdir	
+	#clean up previous context if empty.
+	if [ -n "$xt_sess" ]; then
+		find "$xt_sess" -mindepth 1 -print -quit | grep -q . || rm -r $xt_sess
+	fi
+
+	xt_first_context=0
+	if [ "$1" == "null" ]; then 
+		echo "current context is now [null]."
+		xt_first_context=1
+		xt_ancont=""
+		return
+	fi
+	local context=($*)
+	#change into the new processing dir
+	xt_subj=${context[0]}
+	xt_sess=${context[1]}
+	xt_ancont=${context[2]}
+	if [ -z "$xt_sess" ]; then echo "ignoring empty context"; return 1; fi
+	if [ ! -d "$xt_sess" ]; then mkdir $xt_sess; fi
+	cd $xt_sess
+	
+	#initialize session variables.
+	xt_vars=( [subject]=$xt_subj [session]=$xt_sess )
+
+	local i src="${xt_aid}_xtvar"
+	if [ -f "$src" ]; then 
+		source $src
+		for (( i=0; i<${#xt_var_names[*]}; i++ )); do xt_vars[${xt_var_names[i]}]=${xt_var_values[i]}; done
+	fi
+
+	#initialize context variables (may overwrite session variables)
+	src="${xt_aid}_${xt_ancont}_xtcontvar"	
+	if [ -f "$src" ]; then 
+		source $src
+		for (( i=0; i<${#xt_var_names[*]}; i++ )); do xt_vars[${xt_var_names[i]}]=${xt_var_values[i]}; done
+	fi
+	local var
+	for var in ${!xt_vars[*]}; do echo -n "[$var]=${xt_vars[$var]} "; done
+	echo ""
+}
+#in 1: subcontext label(s) to delete.
+function del_context()
+{
+	local lbl lbls=($*) cf=${xt_aid}_xtcont
+	if [ ! -f "$cf" ]; then return; fi
+	for lbl in ${lbls[*]}; do
+		source $cf
+		rm -f ${xt_aid}_$lbl_xtcontvar
+		xt_cont_ids=(${xt_cont_ids[*]/$lbl})
+		echo "xt_cont_ids=(${xt_cont_ids[*]})" > $cf
+	done
+}
+#list contexts available within the current context.
+function list_contexts()
+{
+
+	local f 
+	if [ ! -f "${xt_aid}_xtcont" ]; then return; fi
+	source "${xt_aid}_xtcont"; echo ${xt_cont_ids[*]}
+}
+
+#multicontext summary - must use this if multiple contexts were used in set_context
+function summary_mc()
+{
+	#save previous context as it will be destroyed
+	local slabel=$1
+	local file=$xt_workdir/$slabel.csv
+	echo "writing $xt_workdir/$slabel.csv"
+	local cn=`ls $xt_workdir/*/${xt_aid}_xtcont`
+	local fcont f i n name val curdir
+	declare -A snames
+	for f in $cn; do 
+		source $f
+		curdir=${f%/*}
+		for fcont in ${xt_cont_ids[*]}; do
+			if [ ! -f "${curdir}/${xt_aid}_${fcont}_xtcontvar" ]; then continue; fi
+			source ${curdir}/${xt_aid}_${fcont}_xtcontvar 
+			for (( i=0; i<${#xt_var_names[*]}; i++ )); do
+				snames[${xt_var_names[i]}]=1
+			done
+		done
+	done
+	declare -A svars
+	local names1=(${!snames[@]})
+	local names
+	#sort names.
+	oldIFS=$IFS; IFS=$'\n'; names=$(sort <<<"${names1[*]}"); IFS=$oldIFS
+
+	echo -n "context," > $file
+	for n in $names; do
+		echo -n $n, >> $file
+	done
+	echo "" >> $file
+	for f in $cn; do
+		source $f
+		curdir=${f%/*}
+		for fcont in ${xt_cont_ids[*]}; do
+			if [ ! -f "${curdir}/${xt_aid}_${fcont}_xtcontvar" ]; then continue; fi
+			source ${curdir}/${xt_aid}_${fcont}_xtcontvar
+			svars=()
+			for (( i=0; i<${#xt_var_names[*]}; i++ )); do 
+				svars[${xt_var_names[i]}]=${xt_var_values[i]}
+			done
+			echo -n "\"$fcont\"", >> $file
+			for name in $names; do
+				val=${svars[$name]}
+				if [ -z "$val" ]; then 
+					val=NA
+				fi
+				echo -n "\"$val\"", >> $file
+			done
+			echo "" >> $file
+		done
+	done
+	echo "written $file."
+}
+# in 1: ouput csv file label
+# (optional) in 2: column name: order output to match order in specific column
+function summary()
+{
+	#save previous context as it will be destroyed
+	local slabel=$1
+	local col=$2 cn i c a
+	local file=$xt_workdir/$slabel.csv
+	if [ -n "$col" ]; then
+		a=${col}_xt 
+		eval "cn=(\${$a[*]})"
+		if [ -z "$cn" ]; then echo "column $col is not defined"; return; fi
+		for i in ${!cn[*]}; do c[i]=$xt_workdir/${cn[i]}/${xt_aid}_xtvar; done
+		cn="${c[*]}"
+	else 
+		cn=`ls $xt_workdir/*/${xt_aid}_*xtvar`
+	fi
+
+	local f n name val
+	declare -A snames
+	for f in $cn; do
+		if [ ! -f "$f" ]; then continue; fi
+		source $f
+		for (( i=0; i<${#xt_var_names[*]}; i++ )); do
+			snames[${xt_var_names[i]}]=1
+		done
+	done
+	declare -A svars
+	local names1=(${!snames[@]})
+	local names
+	#sort names.
+	oldIFS=$IFS; IFS=$'\n'; names=$(sort <<<"${names1[*]}"); IFS=$oldIFS
+
+	echo -n "" > $file
+	for n in $names; do
+		echo -n $n, >> $file
+	done
+	echo "" >> $file
+	for f in $cn; do
+		svars=()
+		if [ -f "$f" ]; then 
+			source $f
+			for (( i=0; i<${#xt_var_names[*]}; i++ )); do 
+				svars[${xt_var_names[i]}]=${xt_var_values[i]}
+			done
+		fi
+		for name in $names; do
+			val=${svars[$name]}
+			if [ -z "$val" ]; then 
+				val=NA
+			fi
+			echo -n "\"$val\"", >> $file
+		done
+		echo "" >> $file
+	done
+	echo "written $file."
+}

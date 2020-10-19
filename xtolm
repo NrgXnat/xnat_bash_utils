@@ -1,0 +1,341 @@
+# Author: Mikhail Milchenko, mmilchenko@wustl.edu
+# Copyright (c) 2020, Computational Imaging Lab, School of Medicine, 
+# Washington University in Saint Louis
+
+# Redistribution and use in source and binary forms,
+# with or without modification, are permitted provided 
+# that the following conditions are met:
+
+# 1. Redistributions of source code must retain the above 
+#    copyright notice, this list of conditions and the following
+#    disclaimer.
+# 2. Redistributions in binary form must reproduce the above 
+#    copyright notice, this list of conditions and the following 
+#    disclaimer in the documentation and/or other materials 
+#    provided with the distribution.
+
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+# PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+# TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#!/bin/bash
+
+function insert_errcheck
+{
+	echo "if (( \$? != 0 )); then echo $xt_aid ERROR: the following command returned error code \$?: \"$1\";  exit 1; fi"
+}
+
+function make_range
+{
+	local i from=$1 to=$2
+	for (( i=from; i<=to; i++)); do echo -n "$i "; done
+}
+
+# interpret command line.
+# in 1 - line.
+function cmdint
+{
+	local __c="$1" cnb
+	if (( xt_interactive == 1 )); then eval "$__c"
+	else 
+		cnb="$(echo -e "${__c}" | tr -d '[[:blank:]]')"
+		case $cnb in
+			"#!/bin/bash")
+				;;
+			xt_for*)
+				echo "$__c"
+				echo "while (( ++xt_iter_ind <= xt_iter_end )); do"
+				echo "if [ \"\${xt_for_range[xt_iter_ind]}\" == \"0\" ]; then continue; fi"
+				echo "xt_loop_iteration_init"
+				;;
+			xt_done)
+				echo "done"
+				echo "set_context null"
+				;;
+			*)	echo "$__c"
+				;;
+		esac
+	fi
+}
+
+function help
+{
+		echo "Online commands: "
+		echo "	load_scans <id1>[,...]	load scan(s) to DICOM by ID to the processing dir"
+		echo "	load_type <type>	load scan(s) DICOM of a given type to the processing dir"
+		echo "	load_dir <dir1>[,...]		load resource dir(s) to the processing dir"
+		echo "	load_file <fil1> [fil2..]	load resource file(s) to the processing dir"
+		echo "	load_workspace			load context variables from XNAT session"
+		echo "	save_workspace			save context variables to XNAT session"
+		echo "	save_dir <dir>			write resource dir to XNAT (overwrites existing)"
+		echo "Offline commands: "	
+		echo "	set_context <subject> <session>	[<context>]"
+		echo "					set current subject and session, and context within session "
+		echo "					each context corresponds to an isolated variable set."
+		echo "	load_data <file>		load a .csv or .xlsx file into arrays"
+		echo "	xt_for <subject_field> [<session_field> [[start]to[end]]]"
+		echo "					iterate over all records."
+		echo "	xt_done				end iteration over records."
+		echo "	save_vars [var1] [,..]		save one or more variables to current context"
+		echo "	load_vars [var1] [,..]		load one or more variables saved in current context"
+		echo "	summary <label>	[column]	generate a comma-separated summary of existing contexts (match order in [column])"
+		echo "	summary_mc <label>		summary when multiple session contexts were used"
+		echo "	list_contexts			list of subcontexts within current context"
+		echo "	del_context			delete a subcontext within current context"
+		echo "	save_profile <label>		save current server credentials under the label."
+		echo "	help				list console commands"
+		echo "	quit				quit interactive console"
+		echo "N.B. summary command destroys current context."
+		echo "Built in variables: "
+		echo "	xt_server xt_user xt_pass	XNAT server credentials"
+		echo "	xt_project xt_subj xt_sess	XNAT project, subject and experiment labels"
+		echo "	xt_jsession			current authenticated JSESSION"
+		echo "	xt_aid				XTOLM analysis ID"
+}
+function quit
+{
+  xtes=1
+}
+
+#in 1 - profile label.
+function load_profile
+{
+	local f=~/.xtolm/$1.profile
+	source $f
+}
+
+#in 1 - profile label
+function save_profile
+{
+#	set -x
+	local f=~/.xtolm/$1.profile
+	echo "xt_server=\"$xt_server\"" > $f
+	echo "xt_user=\"$xt_user\"" >> $f
+	echo "xt_project=\"$xt_project\"" >> $f
+}
+
+function save_defaults
+{
+	local f=~/.xtolm/xtolm.defaults
+	local arg
+	if [ ! -d "~/.xtolm" ]; then mkdir -p ~/.xtolm;	fi
+	echo "" > $f
+	for arg in $xt_args; do echo "${arg}=\"${!arg}\"" >> $f; done
+}
+function load_defaults
+{
+	local f=~/.xtolm/xtolm.defaults
+	local arg
+	if [ -f "$f" ]; then source $f; else return; fi
+	echo -n "#defaluts: "
+	for arg in $xt_args; do 
+		if [ -n "${!arg}" ]; then echo -n "[$arg]=${!arg} "; fi
+	done
+	echo ""
+}
+
+xt_args="xt_server xt_user xt_project" #xt_subj xt_sess"
+if [ -z "$1" ]; then
+	echo "xtolm: XNAT image analysis console interpreter"
+	echo "Usage: xtolm [options] [<script file> [<script arguments>]]"
+	echo "Options required for online storage:"
+	echo "	-sr	<server>	XNAT server"
+	echo "	-u	<user>		XNAT user"
+	echo "	-pa	<password>	XNAT password"
+	echo "	-pr	<XNAT project>	XNAT project"
+	echo "OR,"
+	echo "	-p	<profile_label>	Load previously saved server profile (a combination of options above)"
+	echo "Options:"
+	echo "	-subj	<subject ID>	XNAT subject"
+	echo " 	-s 	<session>	XNAT session"	
+	echo "	-i			interactive debug console"
+	echo "	-id			analysis ID"
+	echo "	-h 			print help on console commands"
+	echo "	-c <from> <to> <pause>	submit jobs to cluster for a range (pause in seconds)"
+	echo "	-o			online mode"
+	echo "	-d			debug mode"
+	echo "N.B.: if -o is not specified, online storage options are ignored."
+	load_defaults
+	exit -1
+fi
+
+
+xt_offline=1
+xt_interactive=0
+xt_debug=0
+input_args="$*"
+load_defaults
+
+umask 0007
+slabel=$1;
+for arg in "$@"; do args[i]=$arg; ((i++)); done
+
+narg=${#args[*]}
+unset niarg xt_sge_from xt_sge_to
+xt_qsub_pause=0
+pa=""
+
+for((i=0; i<narg; i++)); do
+	if [ "${args[i]}" == "-c" ]; then ((i++)); xt_sge_from="${args[i]}"; ((i++)); xt_sge_to="${args[i]}"
+					((i++)); xt_qsub_pause="${args[i]}"; continue; fi
+	if [ "${args[i]}" == "-sr" ]; then (( i++ )); xt_server="${args[i]}"; pa="$pa -sr $xt_server"; continue; fi
+	if [ "${args[i]}" == "-u" ]; then (( i++ )); xt_user="${args[i]}"; pa="$pa -u $xt_user"; continue; fi
+	if [ "${args[i]}" == "-pa" ]; then (( i++ )); xt_pass="${args[i]}"; continue; fi
+	if [ "${args[i]}" == "-pr" ]; then (( i++ )); xt_project="${args[i]}"; pa="$pa -pr $xt_project"; continue; fi
+	if [ "${args[i]}" == "-p"  ]; then (( i++ )); xt_profile="${args[i]}"; pa="$pa -p $xt_profile"; continue; fi
+	if [ "${args[i]}" == "-subj" ]; then (( i++ )); xt_subj="${args[i]}"; pa="$pa -subj $xt_subj"; continue; fi
+#	if [ "${args[i]}" == "-r" ]; then (( i++ )); xt_script="${args[i]}"; continue; fi
+	if [ "${args[i]}" == "-r" ]; then (( i++ )); continue; fi # this is passed when script is executed.
+	if [ "${args[i]}" == "-s" ]; then (( i++ )); xt_sess="${args[i]}"; pa="$pa -s $xt_sess"; continue; fi
+	if [ "${args[i]}" == "-id" ]; then (( i++ )); xt_aid="${args[i]}"; pa="$pa -id $xt_aid"; continue; fi
+	if [ "${args[i]}" == "-h" ]; then help; exit 0; fi
+	if [ "${args[i]}" == "-i" ]; then xt_interactive=1; continue; fi
+	if [ "${args[i]}" == "-o" ]; then xt_offline=0; pa="$pa -o"; continue; fi
+	if [ "${args[i]}" == "-d" ]; then xt_debug=1; continue; fi
+	niarg="$niarg ${args[i]}"
+done
+
+cluster_job=0
+if [ -n "$xt_sge_from" -a -n "$xt_sge_to" ]; then cluster_job=1; fi
+
+if [ -n "$xt_profile" ]; then
+	load_profile $xt_profile
+fi
+xt_jsession=""
+if (( xt_offline == 0 )); then
+	if [ -z "$xt_pass" ]; then read -s -p "XNAT password for $xt_user: " xt_pass; echo ""; fi
+	echo "#verifying login..."
+	JSESSION=`curl -s -k -u $xt_user:$xt_pass "${xt_server}/REST/JSESSION"`
+	JSERROR=`echo $JSESSION | grep Error`
+	
+	while [ -n "$JSERROR" ]; do
+		read -s -p "#Password for $xt_user incorrect, retry: " xt_pass
+		echo "#verifying login credentials..."
+		JSESSION=`curl -s -k -u $xt_user:$xt_pass "${xt_server}/REST/JSESSION"`
+		JSERROR=`echo $JSESSION | grep Error`	
+	done
+	echo "#login verified"
+	pa="$pa -pa $xt_pass"
+	xt_jsession=$JSESSION
+fi
+
+if (( "$xt_offline" == 0 )); then
+	if [ -z "$xt_server" -o -z "$xt_project" -o -z "$xt_user" -o -z "$xt_pass" ]; then
+		echo "#Xtolm ERROR: one of parameters was not set, exiting."
+		echo "#server=$xt_server, user=$xt_user, pass=****, project=$xt_project, subject=$xt_subj, session=$xt_sess"
+		exit -1
+	else
+		echo -n "#"
+		for arg in $xt_args; do 
+			if [ -n "${!arg}" ]; then echo -n "[$arg]=${!arg} "; fi
+		done
+		echo ""
+	fi
+fi
+if [ -n "$niarg" ]; then
+
+	tmp=( $niarg )
+	xt_script=${tmp[0]}	
+	tmp[0]=""
+	if [ ! -f "$xt_script" ]; then
+		echo "#File $xt_script not found, exiting"
+		exit -1
+	else
+		xt_scriptname="`basename $xt_script`"
+		fil=`pwd`/`mktemp ${xt_scriptname}XXX.sh`
+		#echo \#$sargs
+		cat $xt_script | xtolm $pa -r $xt_script > $fil
+		chmod +x $fil
+		if (( xt_debug == 0 )); then
+			trap "rm -rf $fil" EXIT
+		fi
+		ret_code=0
+		if ((cluster_job==1)); then
+			_linux_user=`whoami`
+			#submit all jobs
+			mkdir -p logs
+			unset module
+			#set -x
+			for l in `make_range $xt_sge_from $xt_sge_to`; do
+				echo qsub $fil $l ${tmp[*]}
+				qsub $fil $l ${tmp[*]}				
+				sleep $xt_qsub_pause
+			done
+			#check queued/running jobs.
+			res=`qstat -u $_linux_user`
+			#wait until all jobs are finished, then move logs and exit
+			while [ -n "$res" ]; do
+				res=`qstat -u $_linux_user`
+				sleep $xt_qsub_pause
+			done
+			echo `basename $fil`*
+			mv `basename $fil`*.o* logs/
+			exit 0
+		else
+			$fil ${tmp[*]}
+			ret_code=$?
+		fi
+		exit $ret_code
+	fi
+fi
+if [ -z "$xt_aid" ]; then 
+	echo "#Xtolm WARNING: analysis ID is not provided"
+fi
+#set -x
+#declare source functions and global variables
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+if (( xt_interactive==0 )); then
+	echo "#Created by Xtolm: XNAT image analysis console interpreter on `date +\"%Y/%m/%d %H:%M\"`"
+	cat $DIR/xtolm.src
+	echo "declare -A xt_vars"
+	echo "declare -A xt_scans"
+else
+	declare -A xt_vars
+	declare -A xt_scans
+	source $DIR/xtolm.src
+fi
+
+#workspace variable definitions
+cmdint "xt_first_context=1"
+cmdint "xt_workdir=`pwd`"
+cmdint "xt_server=$xt_server"
+if (( xt_offline == 0 )); then	cmdint "xt_jsession=$xt_jsession"; fi
+cmdint "xt_server=`echo $xt_server | sed 's/\/$//'`"
+cmdint "xt_user=$xt_user"; cmdint "xt_pass=$xt_pass"; cmdint "xt_project=$xt_project"; cmdint "xt_subj=$xt_subj"; cmdint "xt_script=$xt_script"
+cmdint "xt_sess=$xt_sess"; cmdint "xt_aid=$xt_aid"; cmdint "xt_interactive=$xt_interactive"; cmdint "xt_offline=$xt_offline"
+cmdint "xt_iter_ind=0"; cmdint "xt_iter_end=0"
+#1. set initial context.
+if [ -n "$xt_subj" -a -n "$xt_sess" ]; then
+	cmdint "set_context $xt_subj $xt_sess"
+else 
+	cmdint "set_context null"
+fi
+
+HISTFILE=~/.xtolm/.history
+if [ -z "$xt_script" ]; then
+	if ((xt_interactive==1));then
+		history -r
+		while read -ep "xtolm>" line; do
+			if [ "${line:0:4}" == "exit" ]; then history -w; fi
+			cmdint "$line"
+			history -s "$line"
+			if (( xtes==1 )); then echo ""; break; fi
+		done
+		history -w
+	else
+		while read line; do
+			cmdint "$line"
+		done
+	fi
+fi
+
+save_defaults
+cmdint "echo \"#end reached\""
