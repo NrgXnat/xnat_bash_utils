@@ -54,6 +54,18 @@ This command moves to another processing dir that corresponds to another XNAT se
 **help**                            	list console commands<br>
 **quit**                            	quit interactive console<br>
 
+## xtolm modes
+**Script execution mode**: the user writes a script which is interpreted by XTOLM, converted to a bash script and executed.<br>
+xtolm [options] <script file> [script args]<br>
+
+**Interactive mode**: Invoked by -i option. Bash-like line-by-line command execution. <br>
+**Offline mode**: Enabled by default. All code that interacts with XNAT is ignored.<br>
+**Online mode**: Invoked by -o option. Loading data to/from XNAT is enabled. <br>
+**Debug mode**: temporary bash script is not deleted upon program exit and can be found in the current dir under <base xt script><random suffix> name. <br>
+**<a href="https://docs.oracle.com/cd/E19279-01/820-3257-12/n1ge.html">Sun Grid Engine (SGE)</a> grid execution mode**: Invoked by -sge option. Must be in script execution mode. Submit the code inside xt_for sycle to SGE grid (uses qsub)
+**<a href="https://slurm.schedmd.com/sbatch.html">SLURM</a> grid execution mode**: Invoked by -slrm option. Must be in script execution mode. Submit the script to Slurm (uses sbatch)
+    
+
 ### Built-in varaiables (online mode only)<br>
 xt_server	https://my_xnat_server<br>
 xt_user	    xnat_user<br>
@@ -61,11 +73,3 @@ xt_pass    	xnat_password<br>
 xt_project  xnat_project<br>
 xt_subj	    xnat_subject<br>
 xt_sess	    xnat_experiment<br>
-
-## xtolm modes
-**Script execution mode**: the user writes a script which is interpreted by XTOLM, converted to a bash script and executed.<br>
-xtolm [options] <script file> [...]<br>
-
-**Interactive mode**: line-by-line command input.<br>
-**Offline mode**: all code that interacts with XNAT is ignored.<br>
-**Debug mode**: temporary bash script is not deleted upon program exit and can be found in the current dir under <base xt script><random suffix> name. <br>
