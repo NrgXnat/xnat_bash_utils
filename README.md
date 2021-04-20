@@ -1,32 +1,30 @@
 # xnat_bash_utils
 
-Skip to end of metadata
-
-    Created by Mikhail Milchenko, last modified on Oct 11, 2018
-
-Go to start of metadata
-
+## Summary
 XTOLM is a local bash XNAT-aware console. This documentation provides a use case for exporting data computations in XNAT to an external spreadsheet.
+
 Useful for:
 
-    developing or running image processing locally in bash shell
-    using XNAT as data source and/or remote archive in shell scripts
-    automating processing of multiple XNAT sessions and to reporting results in spreadsheets
+    - developing or running image processing locally in bash shell
+    - using XNAT as data source and/or remote archive in shell scripts
+    - automating processing of multiple XNAT sessions and to reporting results in spreadsheets
     focusing on local script development and minimizing programming effort to interact with XNAT
 
-Installing XTOLM
+##Requirements
+    - bash 4.2+
+    
+## Installing XTOLM
+Put the contents in a local directory and add it to PATH environment variable.
 
-XTOLM is installed on NRG cluster.  Set up your environment with NRG image analysis algorithms to use it.
 Developing with XTOLM
-
 Refer to use cases for examples of batch scripts written with xtolm:
-
     Compute whole brain volume and save statistics in a spreadsheet
-    ESM-CT DBS contact localization and STN atlas pipeline
 
-XTOLM Command Reference:
+## XTOLM Command Reference
 
-Online Commands: mostly, load/save scans, resources and metadata as resources from/to XNAT.
+### Online Commands
+Mostly, load/save scans, resources and metadata as resources from/to XNAT.
+
 load_scans <id1>[,...]	load scan(s) to DICOM by ID to the processing dir
 load_type <type>	load scan(s) DICOM of a given type to the processing dir
 load_dir <dir1>[,...]	load resource dir(s) to the processing dir
@@ -38,8 +36,9 @@ save context variables to XNAT session (stored under unique analysis ID)
 save_dir <dir>	write resource dir to XNAT (overwrites existing)
 
    
+### Offline Commands
+The purpose is to enable batch analyses. Each study is loaded into a separate directory and is processed within 'processing context': XNAT subject and experiment label. Each study directory can have DICOM, resource dirs, and some configuration files that store context information. Workspace is defined as all user-defined variables that should be saved as key-value pairs.
 
-Offline Commands: The purpose is to enable batch analyses. Each study is loaded into a separate directory and is processed within 'processing context': XNAT subject and experiment label. Each study directory can have DICOM, resource dirs, and some configuration files that store context information. Workspace is defined as all user-defined variables that should be saved as key-value pairs.
 set_context <subject> <session>	set current context of subject and session
 set_context <subject> <session> <context>	set current context when multiple contexts (variable namespaces) per session are allowed.
 list_contexts	list of subcontexts within current context
@@ -65,10 +64,7 @@ Command Details
 set_context: move to another processing dir that corresponds to another XNAT session, and load/init workspace variables for that session. Previously computed variables are loaded using this command.
 
 save_vars: save local vars (name+value) to current context (context is saved in a file within processing dir or online in XNAT experiment).
-
 load/save workspace: sync context variables with XNAT session (load/save to designated resource)
-
- 
 
 Script execution mode: the user writes a script which is interpreted by XTOLM, converted to a bash script and executed.
 
