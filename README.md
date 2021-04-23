@@ -13,7 +13,7 @@ Useful for:
 To get started writing scripts in XTOLM, check out this <a href="https://github.com/NrgXnat/xnat_bash_utils/blob/main/XTOLM-example.pdf">XTOLM use case tutorial</a>.
 
 ## Requirements
-    64-bit Linux (tested on CentOS 6 and 7)
+    64-bit Linux (tested on CentOS 6, 7 and 8)
     Bash 4.2+
     
 ## Installing XTOLM
