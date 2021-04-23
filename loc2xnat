@@ -1,31 +1,3 @@
-# Author: Mikhail Milchenko, mmilchenko@wustl.edu
-# Copyright (c) 2020, Computational Imaging Lab, School of Medicine, 
-# Washington University in Saint Louis
-
-# Redistribution and use in source and binary forms,
-# with or without modification, are permitted provided 
-# that the following conditions are met:
-
-# 1. Redistributions of source code must retain the above 
-#    copyright notice, this list of conditions and the following
-#    disclaimer.
-# 2. Redistributions in binary form must reproduce the above 
-#    copyright notice, this list of conditions and the following 
-#    disclaimer in the documentation and/or other materials 
-#    provided with the distribution.
-
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
-# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
-# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
-# PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
-# TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 #!/bin/bash
 
 #Sun Grid Engine configuration options
@@ -48,28 +20,32 @@
 
 function createEntity
 {
-local remote="$1" notFound="$2" force="$3" prm prms path res
-prm="-k --cookie JSESSIONID=$JSESSION"
-path="$server/$remote"
-echo "curl $prm $path"
-res=(`curl $prm $path`)
+	local remote="$1" notFound="$2" force="$3" prm prms path res
+	prm="-k --cookie JSESSIONID=$JSESSION"
+	path="$server/$remote"	
+	echo "curl $prm $path"
+	res=(`curl $prm $path`)
+	
+	echo "ret code: $?, curl result: ${res}..."
+	res1=`echo ${res[*]} | grep "$notFound"`
+	
+	if [ -z "$res1" ]; then 
+	echo "Looks like the entity is found"
+    else
+        echo "Entity not found"        
+    fi
 
-echo "ret code: $?, curl result: ${res[0]}..."
-res=`echo $res | grep "$notFound"`
-
-echo "Looks like the entity is found"
-
-if [ -n "$res" -o -n "$force" ]; then
-echo "creating $remote"
-echo curl $prms -X PUT $path
-curl $prm -X PUT $path
-if (( $? )); then
-echo "loc2xnat ERROR: failed to create $remote, exiting"
-exit -1
-fi
-else
-echo "already exists: $remote"
-fi
+	if [ -n "$res1" -o -n "$force" ]; then
+		echo "creating $remote"
+		echo curl $prms -X PUT $path
+		curl $prm -X PUT $path
+		if (( $? )); then 
+			echo "loc2xnat ERROR: failed to create $remote, exiting"
+			exit -1
+		fi
+	else
+		echo "already exists: $remote"
+	fi
 }
 
 ##################################################
@@ -80,56 +56,56 @@ fi
 # global 2 &3: user & pass
 function entityExists
 {
-local remote="$1" notFound="$2" prm prms path res
-remote="$1"; notFound="$2"
-prm="-k -u $user:$pass"; prms="-k -u $user:****";
-path="$server/$remote"
-echo "curl $prms $path"
-res=`curl $prm $path | grep "$notFound"`
-if [ -n "$res" ]; then return 0; else return 1; fi
+	local remote="$1" notFound="$2" prm prms path res
+	remote="$1"; notFound="$2"
+	prm="-k -u $user:$pass"; prms="-k -u $user:****";
+	path="$server/$remote"
+	echo "curl $prms $path"
+	res=`curl $prm $path | grep "$notFound"`
+	if [ -n "$res"	]; then return 0; else return 1; fi
 }
 
 echo "local folder -> XNAT"
 if [ -z $3 ]; then
-echo "Usage: loc2xnat <MR session label> <local directory> <mode> [options]"
-echo "e.g. loc2xnat SUBJ1_MRSESSION1 ProcessedDir r"
-echo "e.g. loc2xnat SUBJ1_MRSESSION1 Session1 d -s 10 -ds"
-echo "mode: "r": upload to resource folder (any file); "d": upload oridinal scan (DICOM)"
-echo "Options:"
-echo " -sr <server> "
-echo " -u <user>"
-echo " -pa <password>"
-echo " -js <jsession> May be supplied instead of user/password"
-echo " -pr <XNAT project>"
-echo " -r <XNAT dir> XNAT destination resource dir"
-echo " -subj <subject ID>"
-echo " -ds generate a derived scan number to avoid overwriting existing scans (use scan_no as the base)"
-echo " -s <scan_no> scan no."
-echo " -z Do not delete the downloaded temp.zip file"
-echo " -d Delete target if existed."
-echo "N.B. loc2xnat None <local directory> r will upload directory at a subject level."
-exit -1
+	echo "Usage: loc2xnat <MR session label> <local directory> <mode> [options]"
+	echo "e.g. loc2xnat SUBJ1_MRSESSION1 ProcessedDir r"
+	echo "e.g. loc2xnat SUBJ1_MRSESSION1 Session1 d -s 10 -ds"
+	echo "mode: \"r\": upload to resource folder (any file); \"d\": upload oridinal scan (DICOM)"
+	echo "Options:"
+	echo "	-sr	<server>			"
+	echo "	-u	<user>"
+	echo "	-pa	<password>"
+	echo "	-js	<jsession>		May be supplied instead of user/password"
+	echo "	-pr	<XNAT project>"
+	echo "	-r	<XNAT dir>		XNAT destination resource dir"
+	echo "	-subj	<subject ID>"
+	echo "	-ds	generate a derived scan number to avoid overwriting existing scans (use scan_no as the base)"
+	echo "	-s	<scan_no>		scan no."
+	echo "	-z 				Do not delete the downloaded temp.zip file"
+	echo "	-d 				Delete target if existed."
+	echo "N.B.	loc2xnat None <local directory> r will upload directory at a subject level."
+	exit -1
 fi
 slabel=$1; shift; dir=$1; shift; mode=$1; shift
 
 if [ -f "loc2xnat.properties" ]; then source loc2xnat.properties; fi
 JSESSION=""
 while [ -n "$1" ]; do
-case "$1" in
--sr) shift; server="$1"; shift ;;
--ds) shift; derScanID=1 ;;
--z) shift; savezip=1 ;;
--d) shift; delete=1 ;;
--s) shift; scan="$1"; shift ;;
--u) shift; user="$1"; shift ;;
--pa) shift; pass="$1"; shift ;;
--pr) shift; project="$1"; shift ;;
--sr) shift; server="$1"; shift ;;
--r) shift; xnat_dir="$1"; shift ;;
--js) shift; JSESSION="$1"; shift ;;
--subj) shift; subj="$1"; shift ;;
-*) shift ;;
-esac
+	case "$1" in 
+		-sr) shift; server="$1"; shift ;;
+		-ds) shift; derScanID=1 ;;
+		-z) shift; savezip=1 ;;
+		-d) shift; delete=1 ;;
+		-s) shift; scan="$1"; shift ;;
+		-u) shift; user="$1"; shift ;;
+		-pa) shift; pass="$1"; shift ;;
+		-pr) shift; project="$1"; shift ;;
+		-sr) shift; server="$1"; shift ;;
+		-r) shift; xnat_dir="$1"; shift ;;
+		-js) shift; JSESSION="$1"; shift ;;
+		-subj) shift; subj="$1"; shift ;;
+		*) shift ;;
+	esac
 done
 
 if [ -z "$xnat_dir" ]; then xnat_dir=$dir; fi
@@ -144,91 +120,91 @@ if [ -z "$subj" ]; then echo "loc2xnat ERROR: subject not specified, exiting"; e
 
 echo "verifying login..."
 if [ -z "$JSESSION" ]; then
-JSESSION=`curl -s -k -u $user:$pass "$server/data/JSESSION"`
-JSERROR=`echo $JSESSION | grep Error`
+	JSESSION=`curl -s -k -u $user:$pass "$server/data/JSESSION"`
+	JSERROR=`echo $JSESSION | grep Error`
 fi
-if [ -n "$JSERROR" ]; then echo "loc2xnat ERROR: incorrect combination of XNAT credentials, exiting"; exit -1; fi
+if [ -n "$JSERROR" ]; then	echo "loc2xnat ERROR: incorrect combination of XNAT credentials, exiting"; exit -1; fi	
 
 cur_dir=`pwd`
 #pre-computed curl command pieces.
-#prm="-k -u $user:$pass"; prms="-k -u $user:****";
-prm="-k --cookie JSESSIONID=$JSESSION"; prms="-k --cookie JSESSIONID=[...]";
+#prm="-k -u $user:$pass"; prms="-k -u $user:****"; 
+prm="-k --cookie JSESSIONID=$JSESSION"; prms="-k --cookie JSESSIONID=[...]"; 
 
 path="$server/data/archive/projects/$project/subjects/$subj/experiments/$slabel"
 if [ "$slabel" == "None" ]; then path="$server/data/archive/projects/$project/subjects/$subj"; fi
 
-echo createEntity "data/archive/projects/${project}/subjects/${subj}" "Unable to find the specified subject."
-createEntity "data/archive/projects/${project}/subjects/${subj}" "Unable to find the specified subject."
+echo createEntity "data/archive/projects/${project}/subjects/${subj}" "Unable to find the specified subject"
+createEntity "data/archive/projects/${project}/subjects/${subj}" "Unable to find the specified subject"
 
 echo "experiment label: $slabel"
 if [ "$slabel" != "None" ]; then
-echo createEntity "data/archive/projects/${project}/subjects/${subj}/experiments/${slabel}?xsiType=xnat:mrSessionData" "Unable to find the specified experiment."
-createEntity "data/archive/projects/${project}/subjects/${subj}/experiments/${slabel}?xsiType=xnat:mrSessionData" "Unable to find the specified experiment."
+	echo createEntity "data/archive/projects/${project}/subjects/${subj}/experiments/${slabel}?xsiType=xnat:mrSessionData" "Unable to find the specified experiment."
+	createEntity "data/archive/projects/${project}/subjects/${subj}/experiments/${slabel}?xsiType=xnat:mrSessionData" "Unable to find the specified experiment."
 fi
 
 if [ "$mode" == "r" ]; then #upload resource directory.
-respath=$path/resources/$xnat_dir
-pushd $dir
-tempf=`mktemp -u XXXX.zip`; trap "rm -f $tempf" EXIT
-echo "zip -r $tempf *"
-zip -r -6 $tempf add_license csh2bash impsc license.txt loc2xnat parse_impsc_log rcsv README.md scans2xnat _tmpfile xlsx2csv.py xnat2loc xtolm xtolm.src &> /dev/null
-#delete if previously existed.
-if [ -n "$delete" ]; then
-echo curl $prms -X DELETE $respath?removeFiles=true
-curl $prm -X DELETE $respath?removeFiles=true
-if (( $? )); then echo "loc2xnat ERROR: cannot delete $respath, exiting"; exit -1; fi
-fi
-#create the resource.
-echo curl $prms -X PUT $respath; curl $prm -X PUT $respath
-if (( $? )); then echo "loc2xnat ERROR: cannot create $respath, exiting"; exit -1; fi
-#upload files for the resource.
-echo "curl $prms -X PUT -F "$tempf=@$tempf" "$respath/files/$tempf?extract=true&overwrite=true""
-time curl $prm -X PUT -F "$tempf=@$tempf" "$respath/files/$tempf?extract=true&overwrite=true"
-if (( $? )); then echo "loc2xnat ERROR: cannot upload files to $respath, exiting"; exit -1; fi
-rm -f $tempf
-popd
-elif [ "$mode" == "d" -a "$slabel" != "None" ]; then #upload session scan(s)
+	respath=$path/resources/$xnat_dir
+	pushd $dir
+		tempf=`mktemp -u XXXX.zip`; trap "rm -f $tempf" EXIT
+		echo "zip -r $tempf *"
+		zip -r -6 $tempf * &> /dev/null
+		#delete if previously existed.
+		if [ -n "$delete" ]; then
+			echo curl $prms -X DELETE $respath?removeFiles=true
+			curl $prm -X DELETE $respath?removeFiles=true
+			if (( $? )); then echo "loc2xnat ERROR: cannot delete $respath, exiting"; exit -1; fi
+		fi
+		#create the resource.
+		echo curl $prms -X PUT $respath; curl $prm -X PUT $respath
+		if (( $? )); then echo "loc2xnat ERROR: cannot create $respath, exiting"; exit -1; fi
+		#upload files for the resource.
+		echo "curl $prms -X PUT -F \"$tempf=@$tempf\" \"$respath/files/$tempf?extract=true&overwrite=true\""
+		time curl $prm -X PUT -F "$tempf=@$tempf" "$respath/files/$tempf?extract=true&overwrite=true"
+		if (( $? )); then echo "loc2xnat ERROR: cannot upload files to $respath, exiting"; exit -1; fi
+		rm -f $tempf
+	popd
+elif [ "$mode" == "d" -a "$slabel" != "None" ]; then #upload session scan(s)	
 
-#if not specified, derive the scan number from DICOM.
-if [ -z "$scan" ]; then scan=`dcminfo -q -t 0020 0011 $dir`; fi
-scan=${scan//" "/""}
+	#if not specified, derive the scan number from DICOM.
+	if [ -z "$scan" ]; then scan=`dcminfo -q -t 0020 0011 $dir`; fi
+	scan=${scan//" "/""}
 
-#create a derived scan ID
-if [ -n "$derScanID" ]; then
-num=1
-while [ -z "$scanIDResolved" ]; do
-entityExists "data/archive/projects/${project}/subjects/${subj}/experiments/${slabel}/scans/${scan}0${num}?xsiType=xnat:mrScanData" "Unable to find the specified scan."
-#echo "entityExists for scan ${scan}0${num} returned $res"; exit 0;
-if (( $? )); then
-echo "scan ${scan}0${num} exists"
-(( num++ ))
+	#create a derived scan ID
+	if [ -n "$derScanID" ]; then
+		num=1
+		while [ -z "$scanIDResolved" ]; do
+			entityExists "data/archive/projects/${project}/subjects/${subj}/experiments/${slabel}/scans/${scan}0${num}?xsiType=xnat:mrScanData" "Unable to find the specified scan."
+			#echo "entityExists for scan ${scan}0${num} returned $res"; exit 0;
+			if (( $? )); then 
+				echo "scan ${scan}0${num} exists"
+				(( num++ ))
+			else	
+				scanIDResolved=1; scan=${scan}0${num}
+			fi
+			if (( num > 1000 )); then echo "loc2xnat ERROR: Cannot resolve scan ID for $derScanID";	exit -1; fi
+		done
+	fi
+	echo "target scan: $scan"
+	spath=$path/scans/$scan
+	if [ -n "$delete" ]; then
+		echo curl $prms -X DELETE $spath?removeFiles=true; curl $prm -X DELETE $spath?removeFiles=true
+		if (( $? )); then echo "xnat2loc ERROR: cannot delete scan $spath, exiting"; exit -1; fi
+	fi
+	
+	echo createEntity "data/archive/projects/${project}/subjects/${subj}/experiments/${slabel}/scans/$scan?xsiType=xnat:mrScanData" "Unable to find the specified scan."
+	
+	createEntity "data/archive/projects/${project}/subjects/${subj}/experiments/${slabel}/scans/$scan?xsiType=xnat:mrScanData" " " "Unable to find the specified scan." 1
+	
+	pushd $dir
+		tempf=`mktemp -u XXXX.zip`; trap "rm -f $tempf" EXIT	
+		echo "zip -r -6 $tempf *"
+		zip -r -6 $tempf * &> /dev/null
+		echo "curl $prms -X PUT -F \"$tempf=@$tempf\" \"$spath/resources/DICOM/files/$tempf?extract=true&format=DICOM\""
+		time curl $prm -X PUT -F "$tempf=@$tempf" "$spath/resources/DICOM/files/$tempf?extract=true&format=DICOM"
+		if (( $? )); then echo "xnat2loc ERROR: cannot upload DICOM files to scan $spath, exiting"; exit -1; fi
+		rm -f $tempf
+	popd
 else
-scanIDResolved=1; scan=${scan}0${num}
-fi
-if (( num > 1000 )); then echo "loc2xnat ERROR: Cannot resolve scan ID for $derScanID"; exit -1; fi
-done
-fi
-echo "target scan: $scan"
-spath=$path/scans/$scan
-if [ -n "$delete" ]; then
-echo curl $prms -X DELETE $spath?removeFiles=true; curl $prm -X DELETE $spath?removeFiles=true
-if (( $? )); then echo "xnat2loc ERROR: cannot delete scan $spath, exiting"; exit -1; fi
-fi
-
-echo createEntity "data/archive/projects/${project}/subjects/${subj}/experiments/${slabel}/scans/$scan?xsiType=xnat:mrScanData" "Unable to find the specified scan."
-
-createEntity "data/archive/projects/${project}/subjects/${subj}/experiments/${slabel}/scans/$scan?xsiType=xnat:mrScanData" " " "Unable to find the specified scan." 1
-
-pushd $dir
-tempf=`mktemp -u XXXX.zip`; trap "rm -f $tempf" EXIT
-echo "zip -r -6 $tempf *"
-zip -r -6 $tempf add_license csh2bash impsc license.txt loc2xnat parse_impsc_log rcsv README.md scans2xnat _tmpfile xlsx2csv.py xnat2loc xtolm xtolm.src &> /dev/null
-echo "curl $prms -X PUT -F "$tempf=@$tempf" "$spath/resources/DICOM/files/$tempf?extract=true&format=DICOM""
-time curl $prm -X PUT -F "$tempf=@$tempf" "$spath/resources/DICOM/files/$tempf?extract=true&format=DICOM"
-if (( $? )); then echo "xnat2loc ERROR: cannot upload DICOM files to scan $spath, exiting"; exit -1; fi
-rm -f $tempf
-popd
-else
-echo "xnat2loc ERROR: unknown mode "$mode", exiting"; exit -1
+	echo "xnat2loc ERROR: unknown mode \"$mode\", exiting"; exit -1		
 fi
 

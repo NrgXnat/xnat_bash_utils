@@ -1,31 +1,3 @@
-# Author: Mikhail Milchenko, mmilchenko@wustl.edu
-# Copyright (c) 2020, Computational Imaging Lab, School of Medicine, 
-# Washington University in Saint Louis
-
-# Redistribution and use in source and binary forms,
-# with or without modification, are permitted provided 
-# that the following conditions are met:
-
-# 1. Redistributions of source code must retain the above 
-#    copyright notice, this list of conditions and the following
-#    disclaimer.
-# 2. Redistributions in binary form must reproduce the above 
-#    copyright notice, this list of conditions and the following 
-#    disclaimer in the documentation and/or other materials 
-#    provided with the distribution.
-
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
-# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
-# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
-# PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
-# TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 #!/bin/bash
 
 function insert_errcheck
@@ -135,11 +107,11 @@ function load_defaults
 	local f=~/.xtolm/xtolm.defaults
 	local arg
 	if [ -f "$f" ]; then source $f; else return; fi
-	echo -n "#defaluts: "
-	for arg in $xt_args; do 
-		if [ -n "${!arg}" ]; then echo -n "[$arg]=${!arg} "; fi
-	done
-	echo ""
+#	echo -n "#defaluts: "
+#	for arg in $xt_args; do 
+#		if [ -n "${!arg}" ]; then echo -n "[$arg]=${!arg} "; fi
+#	done
+#	echo ""
 }
 
 xt_args="xt_server xt_user xt_project" #xt_subj xt_sess"
@@ -159,7 +131,8 @@ if [ -z "$1" ]; then
 	echo "	-i			interactive debug console"
 	echo "	-id			analysis ID"
 	echo "	-h 			print help on console commands"
-	echo "	-c <from> <to> <pause>	submit jobs to cluster for a range (pause in seconds)"
+	echo "	-sge <from> <to> <pause>	submit jobs to SGE cluster for a range (pause in seconds)"
+    echo "	-slrm <from> <to> <pause>	submit jobs to SLURM cluster for a range (pause in seconds)"
 	echo "	-o			online mode"
 	echo "	-d			debug mode"
 	echo "N.B.: if -o is not specified, online storage options are ignored."
@@ -179,13 +152,16 @@ slabel=$1;
 for arg in "$@"; do args[i]=$arg; ((i++)); done
 
 narg=${#args[*]}
-unset niarg xt_sge_from xt_sge_to
-xt_qsub_pause=0
+unset niarg xt_grid_from xt_grid_to 
+sge_job=0; slrm_job=0
+xt_grid_pause=0
 pa=""
 
 for((i=0; i<narg; i++)); do
-	if [ "${args[i]}" == "-c" ]; then ((i++)); xt_sge_from="${args[i]}"; ((i++)); xt_sge_to="${args[i]}"
-					((i++)); xt_qsub_pause="${args[i]}"; continue; fi
+	if [ "${args[i]}" == "-sge" ]; then ((i++)); sge_job=1; xt_grid_from="${args[i]}"; ((i++)); xt_grid_to="${args[i]}"
+					((i++)); xt_grid_pause="${args[i]}"; continue; fi
+	if [ "${args[i]}" == "-slrm" ]; then ((i++)); slrm_job=1; xt_grid_from="${args[i]}"; ((i++)); xt_grid_to="${args[i]}"
+					((i++)); xt_grid_pause="${args[i]}"; continue; fi
 	if [ "${args[i]}" == "-sr" ]; then (( i++ )); xt_server="${args[i]}"; pa="$pa -sr $xt_server"; continue; fi
 	if [ "${args[i]}" == "-u" ]; then (( i++ )); xt_user="${args[i]}"; pa="$pa -u $xt_user"; continue; fi
 	if [ "${args[i]}" == "-pa" ]; then (( i++ )); xt_pass="${args[i]}"; continue; fi
@@ -203,8 +179,7 @@ for((i=0; i<narg; i++)); do
 	niarg="$niarg ${args[i]}"
 done
 
-cluster_job=0
-if [ -n "$xt_sge_from" -a -n "$xt_sge_to" ]; then cluster_job=1; fi
+#echo "slrm_job: $slrm_job, from: $xt_grid_from, to: $xt_grid_to, pause: $xt_grid_pause"
 
 if [ -n "$xt_profile" ]; then
 	load_profile $xt_profile
@@ -240,6 +215,7 @@ if (( "$xt_offline" == 0 )); then
 		echo ""
 	fi
 fi
+
 if [ -n "$niarg" ]; then
 
 	tmp=( $niarg )
@@ -258,27 +234,45 @@ if [ -n "$niarg" ]; then
 			trap "rm -rf $fil" EXIT
 		fi
 		ret_code=0
-		if ((cluster_job==1)); then
+
+		if (( sge_job==1 )); then
+			echo "sge job"
 			_linux_user=`whoami`
 			#submit all jobs
 			mkdir -p logs
 			unset module
 			#set -x
-			for l in `make_range $xt_sge_from $xt_sge_to`; do
+			for l in `make_range $xt_grid_from $xt_grid_to`; do
 				echo qsub $fil $l ${tmp[*]}
 				qsub $fil $l ${tmp[*]}				
-				sleep $xt_qsub_pause
+				sleep $xt_grid_pause
 			done
 			#check queued/running jobs.
 			res=`qstat -u $_linux_user`
 			#wait until all jobs are finished, then move logs and exit
 			while [ -n "$res" ]; do
 				res=`qstat -u $_linux_user`
-				sleep $xt_qsub_pause
+				sleep $xt_grid_pause
 			done
 			echo `basename $fil`*
 			mv `basename $fil`*.o* logs/
 			exit 0
+		elif (( slrm_job==1 )); then
+			for l in `make_range $xt_grid_from $xt_grid_to`; do
+				echo sbatch $fil $l ${tmp[*]}
+				sbatch $fil $l ${tmp[*]}				
+				sleep $xt_grid_pause
+			done
+			usr=`whoami`
+			#check queued/running jobs.
+			squeue -u $usr
+			njobs=`squeue -u $usr | wc -l`
+			echo "submitted $(( njobs -1 )) jobs"
+			while (( njobs>1 )); do
+			    squeue -u $usr
+			    njobs=`squeue -u $usr | wc -l`
+			    sleep 10		    
+			done
 		else
 			$fil ${tmp[*]}
 			ret_code=$?
@@ -286,6 +280,7 @@ if [ -n "$niarg" ]; then
 		exit $ret_code
 	fi
 fi
+echo "#!/bin/bash"
 if [ -z "$xt_aid" ]; then 
 	echo "#Xtolm WARNING: analysis ID is not provided"
 fi

@@ -1,31 +1,3 @@
-# Author: Mikhail Milchenko, mmilchenko@wustl.edu
-# Copyright (c) 2020, Computational Imaging Lab, School of Medicine, 
-# Washington University in Saint Louis
-
-# Redistribution and use in source and binary forms,
-# with or without modification, are permitted provided 
-# that the following conditions are met:
-
-# 1. Redistributions of source code must retain the above 
-#    copyright notice, this list of conditions and the following
-#    disclaimer.
-# 2. Redistributions in binary form must reproduce the above 
-#    copyright notice, this list of conditions and the following 
-#    disclaimer in the documentation and/or other materials 
-#    provided with the distribution.
-
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
-# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
-# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
-# PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
-# TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 #!/bin/bash
 
 #Sun Grid Engine configuration options
@@ -92,7 +64,11 @@ function save_UID_map
 	echo "serinstuids=($uids)" | tr -d ' ' >> $mf
 }
 
-
+function exit_with_error
+{
+    echo "xnat2loc ERROR: $1, exiting"
+    exit -1
+}
 
 #1: str
 #2: field
@@ -153,6 +129,7 @@ if [ -z $1 ]; then
 	echo "	-r	<dir>[,<dir>,...]		resource directory(ies) to download"
 	echo "	-subj	<subject ID>"
 	echo "	-z	Do not unzip"
+	echo "	-uncompress	uncompress incoming DICOM scans."
 	echo "NOTE: if both -s and -r are specified, specified scans with specified scan resource dir(s) will be downloaded."
 	exit -1
 fi
@@ -164,7 +141,7 @@ slabel=$1; shift;
 
 for arg in "$@"; do args[i]=$arg; ((i++)); done
 #for((i=1; i<((${#args[*]})); i++)); do echo ${args[i]}; done
-mapfile=0
+mapfile=0; uncompress=0
 #set -x
 
 JSESSION=""
@@ -184,28 +161,26 @@ while [ -n "$1" ]; do
 		 -s) shift; scans=$1; shift; if [ -f "$scans" ]; then scans=`cat $scans`; fi ;;
 		-st) shift; stypes=$1; shift; if [ -f "$stypes" ]; then stypes=`cat $stypes`; fi ;;
 		 -r) shift; rdirs=$1; shift; if [ -f "$rdirs" ]; then stypes=`cat $rdirs`; fi ;;
-	      -subj) shift; subj=$1; shift ;;
+	  -subj) shift; subj=$1; shift ;;
+-uncompress) shift; uncompress=1 ;;
 		  *) shift ;;
 	esac
 done
 
 server=`echo $server | sed 's/\/$//'`
 if [ -z "$project" -o -z "$subj" -o -z "$slabel" ]; then
-	echo "Please specify project, subject and session label."
-	exit -1
+    exit_with_error "Please specify project, subject and session label."
 fi
 
 if [ -z "$JSESSION" ]; then
-	if [ -z "$user" -o -z "$pass" ]; then
-		echo "User credentials required, exiting"
-	fi
+	if [ -z "$user" -o -z "$pass" ]; then exit_with_error "User credentials required"; fi
 	echo curl -s -k -u $user:xxxx "$server/data/JSESSION"
 	JSESSION=`curl -s -k -u $user:$pass "$server/data/JSESSION"`
 	JSERROR=`echo $JSESSION | grep Error`
-	if [ -n "$JSERROR" ]; then echo "user credentials failed"; exit -1; fi
+	if [ -n "$JSERROR" ]; then exit_with_error "user credentials failed"; fi
 fi
 prm="curl -k --cookie JSESSIONID=$JSESSION"; prms="curl -k --cookie JSESSIONID=[...]"; 
-
+echo "JSESSION: $JSESSION"
 #scan resource dir with DICOM files.
 dcmdir=DICOM
 #uncomment for modified DICOM
@@ -227,8 +202,6 @@ elif [ -z "$scans" ]; then
 	scans="ALL"; 
 fi
 
-
-
 #download scans if no resource dir was specified
 if [ -n "$scans" -a -z "$rdirs" ]; then
 	echo "$prms \"${server}/REST/projects/${project}/subjects/${subj}/experiments/${slabel}/scans/${scans}/files?format=zip\""
@@ -249,7 +222,13 @@ if [ -n "$scans" -a -z "$rdirs" ]; then
 	fi
 #	set +x
 	mv */scans/*/*/$dcmdir/files/* DICOM/
+	
+	if (( uncompress )); then 
+		echo uncompress_dcm_dir `pwd`/DICOM
+		uncompress_dcm_dir `pwd`/DICOM
+	fi 
 	$dcmsrt DICOM &> /dev/null
+	if (( $? )); then exit_with_error "dcm_sort failed"; fi
 
 	rm -r $slabel
 	#mv */scans/*/*/secondary/files/* SECONDARY
@@ -257,7 +236,9 @@ if [ -n "$scans" -a -z "$rdirs" ]; then
 else
 	echo $prms "${server}/REST/projects/${project}/subjects/${subj}/experiments/${slabel}/resources/${rdirs}/files?format=zip"
 	$prm "${server}/REST/projects/${project}/subjects/${subj}/experiments/${slabel}/resources/${rdirs}/files?format=zip" > temp.zip
-	unzip temp.zip &> /dev/null; rm temp.zip
+	unzip temp.zip &> /dev/null
+	if (( $? )); then exit_with_error "unzip failed"; fi
+	rm temp.zip
 	mv ${slabel}/resources/* .
 	lst=( `split_str $rdirs ","` )
 	for ((i=0; i<${#lst[*]}; i++)); do
