@@ -38,6 +38,30 @@ function cmdint
 	fi
 }
 
+function init_slurm_job
+{
+	local job=$1 wt=$2 mem=$3 use_gpu=$4 cpus=$5
+	echo "##############################SBATCH configuration####################################"
+	echo "#SBATCH -J $1"
+	echo "#SBATCH -o $1.o%j"
+	echo "#SBATCH -e $1.e%j"
+	echo "#SBATCH -c $cpus"
+        echo "#SBATCH -N 1"
+	if (( use_gpu==1 )); then
+		echo "#SBATCH --gres gpu:1"
+	fi
+	if (( mem<=0 )); then mem=4000; fi
+	echo "#SBATCH --mem ${mem}M"
+	if (( wt <= 0 )); then wt=1; fi
+	echo "#SBATCH -t ${wt}:00:00"
+	echo "##############################end SBATCH configuration###############################"
+}
+
+function init_sge_job
+{
+	echo "#SGE configuration"
+}
+
 function help
 {
 		echo "Online commands: "
@@ -133,6 +157,10 @@ if [ -z "$1" ]; then
 	echo "	-h 			print help on console commands"
 	echo "	-sge <from> <to> <pause>	submit jobs to SGE cluster for a range (pause in seconds)"
     echo "	-slrm <from> <to> <pause>	submit jobs to SLURM cluster for a range (pause in seconds)"
+	echo "	-gpu			[SLURM] run on GPU node [false]"
+	echo "	-mem <MAX_MEM>		[SLURM] requested memory in MB [4000]"
+	echo "	-wt <MAX_TIME>		[SLURM] requested job time limit (hours) [1]"
+	echo "	-cpus <int>		[SLURM] CPU's per job [1]"
 	echo "	-o			online mode"
 	echo "	-d			debug mode"
 	echo "N.B.: if -o is not specified, online storage options are ignored."
@@ -153,9 +181,11 @@ for arg in "$@"; do args[i]=$arg; ((i++)); done
 
 narg=${#args[*]}
 unset niarg xt_grid_from xt_grid_to 
+xt_grid_mem=-1; xt_grid_gpu=-1; xt_grid_wt=-1; xt_grid_cpus=1
 sge_job=0; slrm_job=0
 xt_grid_pause=0
 pa=""
+
 
 for((i=0; i<narg; i++)); do
 	if [ "${args[i]}" == "-sge" ]; then ((i++)); sge_job=1; xt_grid_from="${args[i]}"; ((i++)); xt_grid_to="${args[i]}"
@@ -173,13 +203,15 @@ for((i=0; i<narg; i++)); do
 	if [ "${args[i]}" == "-s" ]; then (( i++ )); xt_sess="${args[i]}"; pa="$pa -s $xt_sess"; continue; fi
 	if [ "${args[i]}" == "-id" ]; then (( i++ )); xt_aid="${args[i]}"; pa="$pa -id $xt_aid"; continue; fi
 	if [ "${args[i]}" == "-h" ]; then help; exit 0; fi
+	if [ "${args[i]}" == "-gpu" ]; then xt_grid_gpu=1; continue; fi
+	if [ "${args[i]}" == "-mem" ]; then (( i++ )); xt_grid_mem="${args[i]}"; continue; fi
+	if [ "${args[i]}" == "-wt" ]; then (( i++ )); xt_grid_wt="${args[i]}"; continue; fi
+	if [ "${args[i]}" == "-cpus" ]; then (( i++ )); xt_grid_cpus="${args[i]}"; continue; fi
 	if [ "${args[i]}" == "-i" ]; then xt_interactive=1; continue; fi
 	if [ "${args[i]}" == "-o" ]; then xt_offline=0; pa="$pa -o"; continue; fi
 	if [ "${args[i]}" == "-d" ]; then xt_debug=1; continue; fi
 	niarg="$niarg ${args[i]}"
 done
-
-#echo "slrm_job: $slrm_job, from: $xt_grid_from, to: $xt_grid_to, pause: $xt_grid_pause"
 
 if [ -n "$xt_profile" ]; then
 	load_profile $xt_profile
@@ -227,9 +259,19 @@ if [ -n "$niarg" ]; then
 	else
 		xt_scriptname="`basename $xt_script`"
 		fil=`pwd`/`mktemp ${xt_scriptname}XXX.sh`
-		#echo \#$sargs
-		cat $xt_script | xtolm $pa -r $xt_script > $fil
+		#echo \#$sargs		
+		echo "#!/bin/bash" > $fil
+		echo "#Created by Xtolm: XNAT image analysis console interpreter on `date +\"%Y/%m/%d %H:%M\"`" >> $fil
+		echo "xt_grid_gpu: $xt_grid_gpu"
+
+		if (( slrm_job==1 )); then
+			init_slurm_job $xt_script $xt_grid_wt $xt_grid_mem $xt_grid_gpu $xt_grid_cpus  >> $fil
+		elif (( sge_job==1 )); then
+			init_sge_job $xt_script >> $fil
+		fi
+		cat $xt_script | xtolm $pa -r $xt_script >> $fil
 		chmod +x $fil
+
 		if (( xt_debug == 0 )); then
 			trap "rm -rf $fil" EXIT
 		fi
@@ -280,15 +322,15 @@ if [ -n "$niarg" ]; then
 		exit $ret_code
 	fi
 fi
-echo "#!/bin/bash"
-if [ -z "$xt_aid" ]; then 
-	echo "#Xtolm WARNING: analysis ID is not provided"
-fi
+
+#if [ -z "$xt_aid" ]; then 
+#	echo "#Xtolm WARNING: analysis ID is not provided"
+#fi
 #set -x
 #declare source functions and global variables
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 if (( xt_interactive==0 )); then
-	echo "#Created by Xtolm: XNAT image analysis console interpreter on `date +\"%Y/%m/%d %H:%M\"`"
 	cat $DIR/xtolm.src
 	echo "declare -A xt_vars"
 	echo "declare -A xt_scans"

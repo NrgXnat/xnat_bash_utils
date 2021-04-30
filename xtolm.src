@@ -1,14 +1,3 @@
-#!/bin/bash
-#Sun Grid Engine configuration options
-#shell name
-#$ -S /bin/bash
-#write .e and .o to the working directory
-#$ -cwd
-#merge stdout and stderr
-#$ -j y
-#import environment variables
-#$ -V
-
 function load_scans()
 {
 	if (( xt_offline == 1 )); then return -1; fi
