@@ -58,8 +58,8 @@ This command moves to another processing dir that corresponds to another XNAT se
 **quit**                            	quit interactive console<br>
 
 ## XTolm modes
-**Script execution mode**: the user writes a script which is interpreted by XTolm, converted to a bash script and executed.<br>
-XTolm [options] <script file> [script args]<br>
+**Script execution mode**: the user writes a script which is interpreted by XTolm, converted to a bash script and executed. Command format:<br>
+xtolm [options] <script file> [script args]<br>
 
 **Interactive mode**: Invoked by -i option. Bash-like line-by-line command execution. <br>
 **Offline mode**: Enabled by default. All code that interacts with XNAT is ignored.<br>
