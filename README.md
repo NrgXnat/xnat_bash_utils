@@ -1,7 +1,7 @@
 # xnat_bash_utils
 
 ## Summary
-XTOLM is a local bash XNAT-aware console. 
+XTolm is a local bash XNAT-aware console. 
 
 Useful for:
 
@@ -10,21 +10,21 @@ Useful for:
     - automating processing of multiple XNAT sessions and to reporting results in spreadsheets
     - focusing on local script development and minimizing programming effort to interact with XNAT
 
-To get started writing scripts in XTOLM, check out this <a href="https://github.com/NrgXnat/xnat_bash_utils/blob/main/XTOLM-example.pdf">XTOLM use case tutorial</a>.
+To get started writing scripts in XTolm, check out this <a href="https://github.com/NrgXnat/xnat_bash_utils/blob/main/XTolm-example.pdf">XTolm use case tutorial</a>.
 
 ## Requirements
     64-bit Linux (tested on CentOS 6, 7 and 8)
     Bash 4.2+
     curl,zip on path
     
-## Installing XTOLM
+## Installing XTolm
 Put the contents in a local directory and add it to PATH environment variable.
 
-Developing with XTOLM
-Refer to use cases for examples of batch scripts written with xtolm:
+Developing with XTolm
+Refer to use cases for examples of batch scripts written with XTolm:
     Compute whole brain volume and save statistics in a spreadsheet
 
-## XTOLM Command Reference
+## XTolm Command Reference
 
 ### Online Commands
 Mostly, load/save scans, resources and metadata as resources from/to XNAT.
@@ -57,9 +57,9 @@ This command moves to another processing dir that corresponds to another XNAT se
 **help**                            	list console commands<br>
 **quit**                            	quit interactive console<br>
 
-## xtolm modes
-**Script execution mode**: the user writes a script which is interpreted by XTOLM, converted to a bash script and executed.<br>
-xtolm [options] <script file> [script args]<br>
+## XTolm modes
+**Script execution mode**: the user writes a script which is interpreted by XTolm, converted to a bash script and executed.<br>
+XTolm [options] <script file> [script args]<br>
 
 **Interactive mode**: Invoked by -i option. Bash-like line-by-line command execution. <br>
 **Offline mode**: Enabled by default. All code that interacts with XNAT is ignored.<br>
