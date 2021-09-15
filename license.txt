@@ -1,5 +1,5 @@
 # Author: Mikhail Milchenko, mmilchenko@wustl.edu
-# Copyright (c) 2020, Computational Imaging Lab, School of Medicine, 
+# Copyright (c) 2010-2021, Computational Imaging Lab, School of Medicine, 
 # Washington University in Saint Louis
 
 # Redistribution and use in source and binary forms,
