@@ -1,0 +1,104 @@
+#!/bin/bash
+
+# Author: Mikhail Milchenko, mmilchenko@wustl.edu
+# Copyright (c) 2010-2021, Computational Imaging Lab, School of Medicine, 
+# Washington University in Saint Louis
+
+# Redistribution and use in source and binary forms,
+# with or without modification, are permitted provided 
+# that the following conditions are met:
+
+# 1. Redistributions of source code must retain the above 
+#    copyright notice, this list of conditions and the following
+#    disclaimer.
+# 2. Redistributions in binary form must reproduce the above 
+#    copyright notice, this list of conditions and the following 
+#    disclaimer in the documentation and/or other materials 
+#    provided with the distribution.
+
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+# PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+# TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+#in 1: string 
+#out: string representation of an array.
+function string_rep
+{
+	local str=( $1 )
+	local out
+	for ((i=0; i<${#str[*]}; i++)); do
+		out[i]=\'${str[i]}\'
+	done
+	echo ${out[*]}
+}
+
+#split tokenized string 
+#input 1: string
+#input 2: token
+function split_str
+{
+	local str="$1"
+	local token="$2"
+	arr=`echo "$str" | tr "$token" " "`
+	echo $arr
+}
+##################################################
+# Read space-separated text file into bash arrays.
+# 
+#set -x
+if [ -z "$2" ]; then 
+	echo "Usage: txt2bash <.txt file> <outfile> [options]"
+	echo "Options:"
+	echo "	-sf <n>					Skip n first lines"
+	echo "	-n <col1[,col2,...]> 	Column names (default is sid,seq,desc,cnt)"
+	exit -1;
+fi
+
+infile=$1
+outfile=$2
+cols=$3
+
+
+args=( $* )
+for((i=1; i<((${#args[*]})); i++)); do
+	if [ "${args[i]}" == "-sf" ]; then (( i++ )); skip="${args[i]}"; continue; fi
+	if [ "${args[i]}" == "-n" ]; then (( i++ )); names=(`split_str "${args[i]}" ","`); continue; fi	
+done
+
+if [ -z "$names" ]; then names=( sid seq desc cnt ); fi
+
+
+row=0
+while read line; do
+	if (( row<skip )); then continue; fi
+	#ignore comments.
+	cmt=`expr match "$line" '#'`
+	if ((cmt==1)); then continue; fi
+	line1=`echo $line | tr -c '\n[:alnum:]_ 	' '_'`
+	vals=($line1)
+	for ((i=0; i<${#names[*]}; i++)); do
+		name=${names[i]}		
+		eval "${name}[$row]=\"${vals[i]}\""
+	done
+	(( row++ ))
+done < $infile
+
+echo -n "" > $outfile
+for ((i=0; i<${#names[*]}; i++)); do
+	col=${names[i]}
+	echo -n "$col=""(" >> $outfile
+	str="\`string_rep \"\${$col[*]}\"\`"
+	eval "arr=$str"
+	echo -n "${arr[*]}" >> $outfile
+#	eval "echo -n "\${${col}[*]}" >> $outfile"
+	echo ")" >> $outfile
+done

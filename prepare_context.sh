@@ -12,7 +12,7 @@ pushd nrg_improc &> /dev/null
         git pull
 popd &> /dev/null
 
-nrg_tools=(add_license csh2bash impsc loc2xnat parse_impsc_log rcsv scans2xnat xlsx2csv.py xnat2loc xtolm xtolm.src)
+nrg_tools=(add_license csh2bash impsc loc2xnat parse_impsc_log rcsv scans2xnat xlsx2csv.py xnat2loc xtolm xtolm.src txt2bash dcminfo dcm_sort dcm_rm_enh gdcmconv)
 
 mkdir -p src
 
