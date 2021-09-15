@@ -15,6 +15,7 @@ To get started writing scripts in XTOLM, check out this <a href="https://github.
 ## Requirements
     64-bit Linux (tested on CentOS 6, 7 and 8)
     Bash 4.2+
+    curl,zip on path
     
 ## Installing XTOLM
 Put the contents in a local directory and add it to PATH environment variable.
