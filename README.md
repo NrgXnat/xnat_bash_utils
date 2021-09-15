@@ -1,7 +1,7 @@
 # xnat_bash_utils
 
 ## Summary
-XTolm is a local bash XNAT-aware console. 
+XTolm is a local bash XNAT-aware bash script wrapper that facilitates the execution of batch analyses.
 
 Useful for:
 
