@@ -14,7 +14,9 @@ popd &> /dev/null
 
 nrg_tools=(add_license csh2bash impsc loc2xnat parse_impsc_log rcsv scans2xnat xlsx2csv.py xnat2loc xtolm xtolm.src)
 
+mkdir -p src
+
 for tool in ${nrg_tools[*]}; do
-	cp -f nrg_improc/$tool .
+	cp -f nrg_improc/$tool src/
 done
 
