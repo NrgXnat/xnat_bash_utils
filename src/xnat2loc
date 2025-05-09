@@ -174,18 +174,18 @@ while [ -n "$1" ]; do
 		-js) shift; JSESSION=$1; shift ;;
 		 -l) shift; slabel=$1; shift ;;
 		-pr) shift; project=$1; shift ;;
-		-sr) shift; server=$1; shift ;;
 		 -o) shift; outdir=$1; shift ;;
-		 -m) shift; mapfile=1; shift ;;
-		 -s) shift; scans=$1; shift; if [ -f "$scans" ]; then scans=`cat $scans`; fi ;;
-		-st) shift; stypes=$1; shift; if [ -f "$stypes" ]; then stypes=`cat $stypes`; fi ;;
-		 -r) shift; rdirs=$1; shift; if [ -f "$rdirs" ]; then stypes=`cat $rdirs`; fi ;;
-		 -rm_enh) shift; rm_enh=1 ;;
+		 -m) shift; mapfile=1 ;;
+		 -s) shift; scans=$1; shift; if [ -f "$scans" ]; then scans=$(cat $scans); fi ;;
+		-st) shift; stypes=$1; shift; if [ -f "$stypes" ]; then stypes=$(cat $stypes); fi ;;
+		 -r) shift; rdirs=$1; shift; if [ -f "$rdirs" ]; then stypes=$(cat $rdirs); fi ;;
+    -rm_enh) shift; rm_enh=1 ;;
+        -uncompress) shift; uncompress=1 ;;
 	  -subj) shift; subj=$1; shift ;;
--uncompress) shift; uncompress=1 ;;
 		  *) shift ;;
 	esac
 done
+
 
 server=`echo $server | sed 's/\/$//'`
 if [ -z "$project" -o -z "$subj" -o -z "$slabel" ]; then
@@ -241,7 +241,11 @@ if [ -n "$scans" -a -z "$rdirs" ]; then
 		save_UID_map $slabel `pwd`/scans.txt "${sarr[*]}"
 	fi
 #	set +x
-	mv */scans/*/*/$dcmdir/files/* DICOM/
+    #fix for long file lists.
+    echo */scans/*/*/$dcmdir/files/* | xargs mv -t DICOM --
+	#mv */scans/*/*/$dcmdir/files/* DICOM/
+	#rsync -a */scans/*/*/$dcmdir/files/* DICOM/
+	#find . -name "*/scans/*/*/$dcmdir/files/*" -exec mv -t DICOM {} +
 	
 	if (( uncompress )); then 
 		echo uncompress_dcm_dir `pwd`/DICOM

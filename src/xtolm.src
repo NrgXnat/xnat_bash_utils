@@ -71,6 +71,7 @@ function xt_init_for_range
 
 	xt_iter_ind=0; xt_iter_end=$((sz-1))
 	min_iter_ind=$xt_iter_end; max_iter_ind=0
+	nrows=0
 	for i in ${!ranges[*]}; do
 		#extract current segment.
 		r=`ixl2xt ${ranges[i]}`
@@ -86,8 +87,44 @@ function xt_init_for_range
 		if (( iter_end > max_iter_ind )); then max_iter_ind=$iter_end; fi
 
 		#update active range flags for this segment.
-		for (( j=iter_ind; j<=iter_end; j++ )); do xt_for_range[j]=1; done
+		for (( j=iter_ind; j<=iter_end; j++ )); do 
+			xt_for_range[j]=1
+			((nrows++))
+		done
 	done
+
+	#for multi-instance execution, only leave indices to be executed on the current script instance.
+	if (( xt_threads > 1 )); then 
+		local tt rst ren row
+		tt=`echo "scale=6; ($nrows/$xt_threads)" | bc`
+		rows_per_thread=`printf "%.0f" $tt`
+
+		#assuming indices are from 1 to nrows, determing start and end indices
+		rst=$(( (xt_threadno-1)*rows_per_thread ))
+		if (( xt_threadno < xt_threads )); then
+			ren=$(( rst+rows_per_thread ))
+		else
+			ren=nrows
+		fi
+		row=0
+		#in the xt_for_range, unset rows that will be skipped by the current script instance.
+		for (( i=0; i<sz; i++ )); do
+			if (( xt_for_range[i] )); then 
+				if (( row == rst )); then min_iter_ind=$i; fi
+				if (( row == ren-1 )); then max_iter_ind=$i; fi
+				if (( row<rst || row>=ren )); then	xt_for_range[i]=0; fi
+				(( row++ ))
+			fi
+		done
+		echo "xt_threads: $xt_threads"
+		echo "xt_threadno: $xt_threadno"
+		echo "xt_for_range: ${xt_for_range[*]}"
+		echo "nrows: $nrows"
+		echo "rows per thread: $rows_per_thread"
+		echo "min_iter_ind: $min_iter_ind"
+		echo "max_iter_ind: $max_iter_ind"
+	fi
+
 	#update start and end indices.
 	xt_iter_ind=$min_iter_ind; xt_iter_end=$max_iter_ind
 }
@@ -159,12 +196,16 @@ function load_data
 
 	#change array names
 
-	rcsv_col_names_xt=(${rcsv_col_names[*]})
+	rcsv_col_names_xt=("${rcsv_col_names[@]}")
 
+    echo "rcsv_col_names: ${rcsv_col_names_xt[@]}"
+    echo 1
 
-	for arr in ${rcsv_col_names_xt[*]}; do
+	for arr in ${rcsv_col_names_xt[@]}; do
+        #echo "iteration $i"
 		eval "${arr}_xt=(\"\${${arr}[@]}\")"
 		unset $arr
+
 	done
 	local sz=0
 	eval "sz=\${#${rcsv_col_names_xt[0]}_xt[*]}"

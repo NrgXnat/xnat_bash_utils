@@ -51,7 +51,7 @@ function cmdint
 			"#!/bin/bash")
 				;;
 			xt_for*)
-				echo "$__c"
+				#echo "$__c"
 				echo "while (( ++xt_iter_ind <= xt_iter_end )); do"
 				echo "if [ \"\${xt_for_range[xt_iter_ind]}\" == \"0\" ]; then continue; fi"
 				echo "xt_loop_iteration_init"
@@ -183,14 +183,15 @@ if [ -z "$1" ]; then
 	echo "	-i			interactive debug console"
 	echo "	-id			analysis ID"
 	echo "	-h 			print help on console commands"
-	echo "	-sge <from> <to> <pause>	submit jobs to SGE cluster for a range (pause in seconds)"
-    echo "	-slrm <from> <to> <pause>	submit jobs to SLURM cluster for a range (pause in seconds)"
+	echo "	-t <int>		[1]. If >1, execute in separate tmux sessions on split range"
+	echo "	-o			online mode"
+	echo "	-d			debug mode"
 	echo "	-gpu			[SLURM] run on GPU node [false]"
 	echo "	-mem <MAX_MEM>		[SLURM] requested memory in MB [4000]"
 	echo "	-wt <MAX_TIME>		[SLURM] requested job time limit (hours) [1]"
 	echo "	-cpus <int>		[SLURM] CPU's per job [1]"
-	echo "	-o			online mode"
-	echo "	-d			debug mode"
+	echo "	-sge <from> <to> <pause>	submit jobs to SGE cluster for a range (pause in seconds)"
+    echo "	-slrm <from> <to> <pause>	submit jobs to SLURM cluster for a range (pause in seconds)"
 	echo "N.B.: if -o is not specified, online storage options are ignored."
 	load_defaults
 	exit -1
@@ -209,7 +210,7 @@ for arg in "$@"; do args[i]=$arg; ((i++)); done
 
 narg=${#args[*]}
 unset niarg xt_grid_from xt_grid_to 
-xt_grid_mem=-1; xt_grid_gpu=-1; xt_grid_wt=-1; xt_grid_cpus=1
+xt_grid_mem=-1; xt_grid_gpu=-1; xt_grid_wt=-1; xt_grid_cpus=1; xt_threads=1;
 sge_job=0; slrm_job=0
 xt_grid_pause=0
 pa=""
@@ -238,8 +239,11 @@ for((i=0; i<narg; i++)); do
 	if [ "${args[i]}" == "-i" ]; then xt_interactive=1; continue; fi
 	if [ "${args[i]}" == "-o" ]; then xt_offline=0; pa="$pa -o"; continue; fi
 	if [ "${args[i]}" == "-d" ]; then xt_debug=1; continue; fi
-	niarg="$niarg ${args[i]}"
+	if [ "${args[i]}" == "-t" ]; then ((i++)); xt_threads="${args[i]}"; continue; fi	
+	niarg="$niarg ${args[i]}" #this is reached when script name is supplied
 done
+
+if (( sge_job || slrm_job )); then xt_threads=1; fi
 
 if [ -n "$xt_profile" ]; then
 	load_profile $xt_profile
@@ -284,71 +288,130 @@ if [ -n "$niarg" ]; then
 	if [ ! -f "$xt_script" ]; then
 		echo "#File $xt_script not found, exiting"
 		exit -1
-	else
-		xt_scriptname="`basename $xt_script`"
+	fi
+	xt_scriptname="`basename $xt_script`"
+	unset fils
+	for (( i=0; i<xt_threads; i++ )); do
+		threadno=$(( i+1 ))
 		fil=`pwd`/`mktemp ${xt_scriptname}XXX.sh`
 		#echo \#$sargs		
+        #echo "creating $fil"
 		echo "#!/bin/bash" > $fil
 		echo "#Created by Xtolm: XNAT image analysis console interpreter on `date +\"%Y/%m/%d %H:%M\"`" >> $fil
-		echo "xt_grid_gpu: $xt_grid_gpu"
+		echo "xt_threads=$xt_threads" >> $fil
+		echo "xt_threadno=$threadno" >> $fil
+		fils[i]="$fil"
+	done
 
-		if (( slrm_job==1 )); then
-			init_slurm_job $xt_script $xt_grid_wt $xt_grid_mem $xt_grid_gpu $xt_grid_cpus  >> $fil
-		elif (( sge_job==1 )); then
-			init_sge_job $xt_script >> $fil
-		fi
+	echo "xt_grid_gpu: $xt_grid_gpu"
+
+	if (( slrm_job==1 )); then
+		init_slurm_job $xt_script $xt_grid_wt $xt_grid_mem $xt_grid_gpu $xt_grid_cpus  >> $fil
+	elif (( sge_job==1 )); then
+		init_sge_job $xt_script >> $fil
+	fi
+
+	for (( i=0; i<xt_threads; i++ )); do
+		fil=${fils[i]}
+        #echo "cat $xt_script | xtolm $pa -r $xt_script >> $fil"
 		cat $xt_script | xtolm $pa -r $xt_script >> $fil
 		chmod +x $fil
+        #echo $fil
+		#if (( xt_debug == 0 )); then
+		#	trap "rm -rf $fil" EXIT
+		#fi
+	done
 
-		if (( xt_debug == 0 )); then
-			trap "rm -rf $fil" EXIT
-		fi
-		ret_code=0
+	ret_code=0
 
-		if (( sge_job==1 )); then
-			echo "sge job"
-			_linux_user=`whoami`
-			#submit all jobs
-			mkdir -p logs
-			unset module
-			#set -x
-			for l in `make_range $xt_grid_from $xt_grid_to`; do
-				echo qsub $fil $l ${tmp[*]}
-				qsub $fil $l ${tmp[*]}				
-				sleep $xt_grid_pause
-			done
-			#check queued/running jobs.
+	if (( sge_job==1 )); then
+		echo "sge job"
+		_linux_user=`whoami`
+		#submit all jobs
+		mkdir -p logs
+		unset module
+		#set -x
+		for l in `make_range $xt_grid_from $xt_grid_to`; do
+			echo qsub $fil $l ${tmp[*]}
+			qsub $fil $l ${tmp[*]}				
+			sleep $xt_grid_pause
+		done
+		#check queued/running jobs.
+		res=`qstat -u $_linux_user`
+		#wait until all jobs are finished, then move logs and exit
+		while [ -n "$res" ]; do
 			res=`qstat -u $_linux_user`
-			#wait until all jobs are finished, then move logs and exit
-			while [ -n "$res" ]; do
-				res=`qstat -u $_linux_user`
-				sleep $xt_grid_pause
-			done
-			echo `basename $fil`*
-			mv `basename $fil`*.o* logs/
-			exit 0
-		elif (( slrm_job==1 )); then
-			for l in `make_range $xt_grid_from $xt_grid_to`; do
-				echo sbatch $fil $l ${tmp[*]}
-				sbatch $fil $l ${tmp[*]}				
-				sleep $xt_grid_pause
-			done
-			usr=`whoami`
-			#check queued/running jobs.
-			squeue -u $usr
-			njobs=`squeue -u $usr | wc -l`
-			echo "submitted $(( njobs -1 )) jobs"
-			while (( njobs>1 )); do
-			    squeue -u $usr
-			    njobs=`squeue -u $usr | wc -l`
-			    sleep 10		    
-			done
-		else
+			sleep $xt_grid_pause
+		done
+		echo `basename $fil`*
+		mv `basename $fil`*.o* logs/
+		exit 0
+	elif (( slrm_job==1 )); then
+		for l in `make_range $xt_grid_from $xt_grid_to`; do
+			echo sbatch $fil $l ${tmp[*]}
+			sbatch $fil $l ${tmp[*]}
+			sleep $xt_grid_pause
+		done
+		usr=`whoami`
+		#check queued/running jobs.
+		squeue -u $usr
+		njobs=`squeue -u $usr | wc -l`
+		echo "submitted $(( njobs -1 )) jobs"
+		while (( njobs>1 )); do
+		    squeue -u $usr
+		    njobs=`squeue -u $usr | wc -l`
+		    sleep 10		    
+		done
+	else
+		unset sessions
+		if (( xt_threads==1 )); then 
 			$fil ${tmp[*]}
-			ret_code=$?
+			ret_code="$?"
+		else
+			#launch sessions
+			for (( i=0; i<xt_threads; i++ )); do
+				fil=${fils[i]}
+				echo tmux new -d "$fil ${tmp[*]}"
+				tmux new -d "$fil ${tmp[*]}"
+				sessions[i]=`tmux display-message -p '#S'`
+			done
+			#track running tmux sessions
+			while : ; do
+				echo "tmux sessions still running:"
+				nrun=0
+				for (( i=0; i<xt_threads; i++ )); do
+					sess=${sessions[i]}
+					tmux has-session -t $sess 2>/dev/null
+					if (( $? == 0 )); then 
+						((nrun++))
+						echo $sess
+					fi
+				done
+				if (( nrun<1 )); then 
+					echo "all sessions finished, exiting"
+					break
+				fi
+				read -t 10 -p "enter <number> to attach, x to exit, <enter> or wait for 10s to refresh:" status
+				if [ "$status" == "r" ]; then 
+					continue
+				elif [ "$status" == "x" ]; then 
+					break
+				else 
+					tmux has-session -t $status 2>/dev/null
+					if (( $?==0 )); then tmux attach -t $status; fi
+				fi
+			done
+			ret_code=0
 		fi
-		exit $ret_code
 	fi
+
+	for (( i=0; i<xt_threads; i++ )); do
+		if (( xt_debug == 0 )); then
+			rm -rf ${fils[i]}
+		fi
+	done
+    
+	exit $ret_code
 fi
 
 #if [ -z "$xt_aid" ]; then 

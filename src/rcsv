@@ -28,6 +28,23 @@
 # NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+function check_varname
+{
+    local s="$1" i
+    if [[ "$s" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then echo $s; return; fi
+    #1. replace all invalid characters with '_'
+    out=""
+    for (( i=0; i<${#s}; i++ )); do
+        ch="${s:$i:1}"
+        if [[ "$ch" =~ ^[a-zA-Z0-9_]*$ ]]; then 
+            out=$out$ch
+        else
+            out=${out}_
+        fi
+    done
+    if [[ ! "${out:0:1}" =~ ^[a-zA-Z_]$ ]]; then out="_$out"; fi
+    echo "$out"    
+}
 
 #convert array to string
 # in 1 -array name.
@@ -45,17 +62,6 @@ function arr2line
 		echo -n \"$t\"" " >> $fil
 	done
 }
-
-function string_rep
-{
-	local str=( $1 )
-	local out
-	for ((i=0; i<${#str[*]}; i++)); do
-		out[i]=\"${str[i]}\"
-	done
-	echo ${out[*]}
-}
-
 
 #correct string from excel.
 #1 string to correct
@@ -80,7 +86,6 @@ function corrstr
 if [ -z "$2" ]; then 
 	echo "Convet csv to bash source file"
 	echo "Usage: rcsv <.csv file> <outfile> [-n]"
-# [-a <append_to_column_name>]
 	echo "options:"
 	echo "	-n	do not output column names array (useful within xt_for cycles)"
 	exit -1;
@@ -90,50 +95,47 @@ fi
 infile=$1
 outfile=$2
 nonames=""
-append=""
 
-if [ "$3"=="-a" ]; then
-	if [ -n "$4" ]; then append=$4; fi
-fi
 if [ "$3" == "-n" ]; then 
 	nonames=1
 	echo "names array will not be saved."
 fi
 
-n=0
-row=0
 
-names="`head -1 "$infile"`"
-names=`corrstr "$names"`
-OLDIFS="$IFS"
-IFS=","
-names=(${names[*]})
-IFS=$OLDIFS
-names0=(`echo ${names[*]}`)
-names=(`echo ${names[*]}`)
-for ((i=0;i<${#names[*]};i++)); do names[i]=${names[i]}$append; done
-echo ${names0[*]}
-#IFS=","
-#set -x
+hd="`head -1 "$infile"`"
+IFS="," read -a names <<< $hd
+
+for ((i=0;i<${#names[*]};i++)); do names[i]=`check_varname "${names[i]}"`; done
+echo ${names[*]}
+n=0;row=0
+
 while IFS=$',' read -r -a vals; do
-	if ((n==0)); then ((n++)); continue; fi
-	for ((i=0; i<${#names[*]}; i++)); do
-		col=${names[i]}
-		val="`corrstr \"${vals[i]}\"`"
-		eval "${col}[$row]=\"$val\""
-	done
-	(( row++ ))
+    if ((n==0)); then ((n++)); continue; fi
+    for ((i=0; i<${#names[*]}; i++)); do
+        col=${names[i]}
+        val="${vals[i]}"
+        eval "${col}[$row]='$val'"
+    done
+    ((row++))
 done < $infile
+
 echo -n "" > $outfile
 if [ -z "$nonames" ]; then
-	echo -n "rcsv_col_names=(" >> $outfile; arr2line names0 $outfile; echo ")" >> $outfile
+	echo -n "rcsv_col_names=(" >> $outfile
+    arr2line names $outfile
+    echo ")" >> $outfile
 fi
 
-arr2line "rcsv_col_names" 
+arr2line "rcsv_col_names"
 for ((i=0; i<=${#names[*]}; i++)); do
 	col=${names[i]}
 	if [ -z "$col" ]; then continue; fi
-	echo -n "$col=""(" >> $outfile
-	arr2line $col $outfile
-	echo ")" >> $outfile
+    sout=""
+    for ((j=0; j<row; j++)); do
+        eval "val=\'\${$col[j]}\'"
+        sout+="$val "
+    done
+    echo -n "$col=(" >> $outfile
+    echo -n "$sout" >> $outfile
+    echo ")" >> $outfile
 done
